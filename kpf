@@ -1,0 +1,397 @@
+#!/bin/bash
+
+# BEGIN UTILS
+
+find_process_port() {
+	sh -c 'lsof -n -i :'$1' | grep LISTEN'
+}
+
+#END UTILS
+
+# BEGIN METHODS
+
+kube_port_forward() {
+	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
+
+	if [ ! -f $KUBE_PORT_FORWARDRC ]; then
+	  tee $KUBE_PORT_FORWARDRC &>/dev/null <<EOF
+{
+	"data": {},
+	"save": {}
+}
+EOF
+	fi
+
+	local NAMESPACE=$1
+	local SELECTOR=$2
+  local LOCAL_PORT=$(echo $3 | cut -f1 -d':')
+  local CLUSTER_PORT=$(echo $3 | cut -f2 -d':')
+	local TYPE=$4
+
+	if [ "$1" = "help" ] || [ "$NAMESPACE" = "" ] || [ "$SELECTOR" = "" ] || [ "$LOCAL_PORT" = "" ] || [ "$CLUSTER_PORT" = "" ]; then
+		echo "kpf add [namespace] [selector] [port or local_port:cluster_port] [type?]"; return 1
+	fi
+
+	if [ "$LOCAL_PORT" -lt "1024" ] && [ "$EUID" -ne 0 ]; then
+		echo "You can not run on a local port below 1024 without being root"; return 1
+	fi
+
+	local RESOURCE_NAME=""
+	case $TYPE in
+		deploy|deployment)
+			RESOURCE_NAME=$(kubectl -n $NAMESPACE get deployments $SELECTOR 2> /dev/null)
+			if [ "$RESOURCE_NAME" = "" ]; then
+				echo "$SELECTOR selector not found on deployments"; return 1
+			fi
+			RESOURCE_NAME="deployment/$SELECTOR"
+			TYPE="deployment"
+		;;
+		rs|replicaset)
+			RESOURCE_NAME=$(kubectl -n $NAMESPACE get rs $SELECTOR 2> /dev/null)
+			if [ "$RESOURCE_NAME" = "" ]; then
+				echo "$SELECTOR selector not found on replicasets"; return 1
+			fi
+			RESOURCE_NAME="rs/$SELECTOR"
+			TYPE="replicaset"
+		;;
+		svc|service)
+			RESOURCE_NAME=$(kubectl -n $NAMESPACE get svc $SELECTOR 2> /dev/null)
+			if [ "$RESOURCE_NAME" = "" ]; then
+				echo "$SELECTOR selector not found on services"; return 1
+			fi
+			RESOURCE_NAME="svc/$SELECTOR"
+			TYPE="service"
+		;;
+		*) #pods
+			RESOURCE_NAME=$(kubectl -n $NAMESPACE get pod -l $SELECTOR -o jsonpath='{.items[0].metadata.name}' 2> /dev/null)
+			TYPE="pod"
+			if [ "$RESOURCE_NAME" = "" ]; then
+				echo "$SELECTOR selector not found on pods"; return 1
+			fi
+		;;
+	esac
+
+	local PORT_STATUS=`find_process_port $LOCAL_PORT`
+	local ENTRY=`jq --arg namespace $NAMESPACE --arg selector $SELECTOR '.data[$namespace][]? | select(.selector == $selector)' $KUBE_PORT_FORWARDRC`
+  if [ "$ENTRY" != "" ] && [ "$PORT_STATUS" != "" ]; then
+    echo "$SELECTOR selector already has port forwarding in `echo $ENTRY | jq -r '.local_port'`"; return 0
+  fi
+
+	ENTRY=`jq --arg local_port $LOCAL_PORT '.data | keys[] as $k | .[$k][]? | select(.local_port == $local_port)' $KUBE_PORT_FORWARDRC`
+  if [ "$ENTRY" != "" ] && [ "`echo $ENTRY | jq -r '.selector'`" != "$SELECTOR" ]; then
+    echo "$LOCAL_PORT already has port forwarding in namespace `echo $ENTRY | jq -r '.namespace'` and `echo $ENTRY | jq -r '.selector'` selector"; return 0
+  fi
+
+	if  [ "$ENTRY" = "" ] && [ "$PORT_STATUS" != "" ]; then
+		echo "The `ps -p $(echo $PORT_STATUS | head -n 1 | cut -f2 -d' ') -o comm=` process is already using this port"; return 1
+	fi
+
+	local ARGS=""
+
+	if [ "$ADDRESS" != "" ]; then
+		ARGS="--address=$ADDRESS"
+	fi
+
+	(kubectl -n $NAMESPACE port-forward $ARGS $RESOURCE_NAME $LOCAL_PORT:$CLUSTER_PORT &> /dev/null &) &
+	local return_code=$?
+	if [ $return_code -ne 0 ]; then
+		echo "Failed to start port forwarding. Exit status: $return_code"; return $return_code
+	fi
+
+	if [ "$PORT_STATUS" != "" ]; then return 0; fi
+
+	local i=0
+	while [ $i -lt 5 ]; do
+		local PORT_STATUS=`find_process_port $LOCAL_PORT`
+		if [ "$PORT_STATUS" != "" ]; then
+			if [ "$ENTRY" = "" ]; then
+				if [ "`jq --arg namespace $NAMESPACE '.data[$namespace]?' $KUBE_PORT_FORWARDRC`" = "" ]; then
+					local TMPFILE=$(mktemp)
+					jq --arg namespace "$NAMESPACE" '.data += {($namespace): []}' $KUBE_PORT_FORWARDRC > $TMPFILE
+					mv "$TMPFILE" $KUBE_PORT_FORWARDRC
+				fi
+
+				RESOURCE_NAME=`ps -p $(echo $PORT_STATUS | head -n 1 | cut -f2 -d' ') -o args --no-headers | cut -f5 -d' '`
+				local TMPFILE=$(mktemp)
+				jq \
+				--arg namespace "$NAMESPACE" \
+				--arg selector "$SELECTOR" \
+				--arg resource_name "$RESOURCE_NAME" \
+				--arg local_port $LOCAL_PORT \
+				--arg cluster_port $CLUSTER_PORT \
+				--arg type $TYPE \
+				'.data[$namespace] += [{ "namespace": $namespace, "selector": $selector, "resource_name": $resource_name, "local_port": $local_port, "cluster_port": $cluster_port, "type": $type }]' $KUBE_PORT_FORWARDRC > $TMPFILE
+				mv "$TMPFILE" $KUBE_PORT_FORWARDRC
+			else
+				local TMPFILE=$(mktemp)
+				jq \
+				--arg namespace "$NAMESPACE" \
+				--arg selector "$SELECTOR" \
+				--arg resource_name "$RESOURCE_NAME" \
+				'(.data[$namespace][] | select(.selector == $selector) | .resource_name) |= $resource_name' $KUBE_PORT_FORWARDRC > $TMPFILE
+				mv "$TMPFILE" $KUBE_PORT_FORWARDRC
+			fi
+
+			echo "kpf add success! $SELECTOR->$LOCAL_PORT"; return 0
+		fi
+		echo "Waiting for the forward to stay active. `expr $i + 1`/5 tries... Next try in 3s"
+		i=`expr $i + 1`
+		sleep 3
+	done
+
+	echo "Maximum failed attempts reached"; return 1
+}
+
+kube_port_forward_del() {
+	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
+
+  local NAMESPACE=$1
+  local SELECTOR=$2
+
+	if [ "$1" = "help" ] || [ "$NAMESPACE" = "" ] || [ "$SELECTOR" = "" ]; then
+		echo "kpf del [namespace] [selector]"; return 1
+	fi
+
+  local FIND_EXP=".data["'$namespace'"][]? | select(.selector == "'$selector'")"
+  local ENTRY=`eval jq --arg namespace $NAMESPACE --arg selector $SELECTOR "'$FIND_EXP'" $KUBE_PORT_FORWARDRC`
+  if [ "$ENTRY" != "" ]; then
+    local PORT_STATUS=`find_process_port $(echo $ENTRY | jq -r '.local_port')`
+    if [ "$PORT_STATUS" != "" ]; then #finded
+      local PID_PROCESS=`echo $PORT_STATUS | head -n 1 | cut -f2 -d' '`
+      kill -15 $PID_PROCESS
+      if [ $? -ne 0 ]; then
+        echo "Failed on kill $SELECTOR listener"; return 1
+      fi
+    fi
+
+		local TMPFILE=$(mktemp)
+		eval jq --arg namespace $NAMESPACE --arg selector $SELECTOR "'del($FIND_EXP)'" $KUBE_PORT_FORWARDRC > $TMPFILE
+		mv "$TMPFILE" $KUBE_PORT_FORWARDRC
+
+		if [ `jq --arg namespace $NAMESPACE '.data[$namespace] | length' $KUBE_PORT_FORWARDRC` -eq 0 ]; then
+			local TMPFILE=$(mktemp)
+			jq --arg namespace $NAMESPACE 'del(.data[$namespace])' $KUBE_PORT_FORWARDRC > $TMPFILE
+			mv "$TMPFILE" $KUBE_PORT_FORWARDRC
+			echo "No more port forwarding from the $NAMESPACE namespace"
+		fi
+
+		echo "kpf del success! $SELECTOR"
+  else
+    echo "$SELECTOR selector does not have port forwarding"
+  fi
+}
+
+kube_port_forward_delall() {
+	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
+
+	if [ "$1" = "help" ]; then
+		echo "kpf delall"; return 1
+	fi
+
+	jq -r \
+    '.data | keys[] as $k | .[$k][]? | [.namespace, .selector] | @tsv' $KUBE_PORT_FORWARDRC | \
+		xargs -I{} bash -c "$(declare -f find_process_port); $(declare -f kube_port_forward_del); kube_port_forward_del {}"
+}
+
+kube_port_forward_list() {
+	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
+
+  local NAMESPACE=$1
+
+	if [ "$1" = "help" ]; then
+		echo "kpf list [namespace?]"; return 1
+	fi
+
+	if [ `jq '.data | length' $KUBE_PORT_FORWARDRC` -eq 0 ]; then
+		echo "There are no active port forwarders"; return 0
+	fi
+
+  if [ -z $NAMESPACE ]; then
+    jq -r \
+    '.data | keys[] as $k | .[$k][]? | [.namespace, .selector, .resource_name, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
+    awk -v cols=`tput cols` -v FS=" " 'BEGIN{mlen=int(cols/6);printf "%-*s%-*s%-*s%-*s%-*s%-*s%s",mlen,"Namespace",int(mlen + mlen/2),"Selector",int(mlen * 2),"Resource Name",int(mlen/2),"Local Port",int(mlen/2),"Cluster Port",int(mlen/2),"Type",ORS;for(c=0;c<cols;c++) printf "="; printf ORS}{gsub(/"/, "", $1);gsub(/"/, "", $2);gsub(/"/, "", $3);gsub(/"/, "", $4);gsub(/"/, "", $5);gsub(/"/, "", $6);printf "%-*s%-*s%-*s%-*s%-*s%-*s%s",mlen,$1,int(mlen + mlen/2),$2,int(mlen * 2),$3,int(mlen/2),$4,int(mlen/2),$5,int(mlen/2),$6,ORS}'
+  else
+    jq -r \
+		--arg namespace "$NAMESPACE" \
+		'.data[$namespace][]? | [.namespace, .selector, .resource_name, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
+		awk -v cols=`tput cols` -v FS=" " 'BEGIN{mlen=int(cols/6);printf "%-*s%-*s%-*s%-*s%-*s%-*s%s",mlen,"Namespace",int(mlen + mlen/2),"Selector",int(mlen * 2),"Resource Name",int(mlen/2),"Local Port",int(mlen/2),"Cluster Port",int(mlen/2),"Type",ORS;for(c=0;c<cols;c++) printf "="; printf ORS}{gsub(/"/, "", $1);gsub(/"/, "", $2);gsub(/"/, "", $3);gsub(/"/, "", $4);gsub(/"/, "", $5);gsub(/"/, "", $6);printf "%-*s%-*s%-*s%-*s%-*s%-*s%s",mlen,$1,int(mlen + mlen/2),$2,int(mlen * 2),$3,int(mlen/2),$4,int(mlen/2),$5,int(mlen/2),$6,ORS}'
+  fi
+}
+
+kube_port_forward_save() {
+	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
+
+	local SAVE_NAME=$1
+
+	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
+		echo "kpf save [save_name]"; return 1
+	fi
+
+	if [ `jq '.data | length' $KUBE_PORT_FORWARDRC` -eq 0 ]; then
+		echo "There are no active port forwarders"; return 0
+	fi
+
+	local TMPFILE=$(mktemp)
+	jq --arg save_name "$SAVE_NAME" '.save += {($save_name): .data}' $KUBE_PORT_FORWARDRC > $TMPFILE
+	mv "$TMPFILE" $KUBE_PORT_FORWARDRC
+
+	echo "kpf state save success!"
+}
+
+kube_port_forward_restore() {
+	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
+
+	local SAVE_NAME=$1
+
+	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
+		echo "kpf restore [save_name]"; return 1
+	fi
+
+	jq -r \
+	--arg save_name "$SAVE_NAME" \
+    '.save[$save_name] | keys[] as $k | .[$k][]? | [.namespace, .selector, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
+		xargs printf "%s %s %s:%s %s\n" | \
+		xargs -I{} bash -c "$(declare -f find_process_port); $(declare -f kube_port_forward); kube_port_forward {}"
+
+		echo "kpf state restore success!"
+}
+
+kube_port_forward_remove() {
+	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
+
+	local SAVE_NAME=$1
+
+	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
+		echo "kpf remove [save_name]"; return 1
+	fi
+
+	local TMPFILE=$(mktemp)
+	jq --arg save_name "$SAVE_NAME" 'del(.save[$save_name])' $KUBE_PORT_FORWARDRC > $TMPFILE
+	mv "$TMPFILE" $KUBE_PORT_FORWARDRC
+
+	echo "kpf state remove success!"
+}
+
+# END METHODS
+
+#BEGIN CLI ---------------------------------------------
+VERSION="v1.0.0"
+
+# Options
+ADDRESS=""
+
+run_cmd() {
+  local CMD=$1
+  shift
+
+  if [ "$CMD" != "add" ]; then
+    if [ ! -f $KUBE_PORT_FORWARDRC ]; then
+      echo "First do port forwarding"; return 1
+    fi
+  fi
+
+  case "$CMD" in
+    add)
+			kube_port_forward $@
+    ;;
+		del)
+			kube_port_forward_del $@
+		;;
+		delall)
+			kube_port_forward_delall $@
+		;;
+		list)
+			kube_port_forward_list $@
+		;;
+		state)
+			local SUBCMD=$1
+
+			if [ "$SUBCMD" = "help" ]; then
+				echo "kpf state [subcmd]"; return 1
+			fi
+
+			shift
+			case "$SUBCMD" in
+				save)
+					kube_port_forward_save $@
+				;;
+				restore)
+					kube_port_forward_restore $@
+				;;
+				remove)
+					kube_port_forward_remove $@
+				;;
+				*)
+					echo "Command $SUBCMD not found"
+				;;
+			esac
+		;;
+    *)
+      echo "Command $CMD not found"
+    ;;
+  esac
+}
+
+usage() {
+  awk -v pn="KUBE PORT FORWARD" -v cols=`tput cols` 'BEGIN{for(c=0;c<cols;c++) if(c == (cols/2 - (length(pn)+2)/2)) { printf " %s ", pn; cols=cols-length(pn)-1 } else { printf "=" }; printf ORS }'
+  echo
+  echo "Usage: kpf [OPTIONS] COMMAND SUBCMD"
+  echo
+  echo "Options:"
+  echo "  -h, --help               See this"
+  echo "  -v, --version            Print version information and quit"
+	echo "  -a, --address            Addresses to listen on comma separated (Only for add command)"
+  echo
+  echo "Commands:"
+  echo "  add           Adds a new port forwarding"
+  echo "  del           Removes an existing port forwarding"
+  echo "  delall        Removes all existing port forwarders"
+  echo "  list          Lists all port forwarding performed"
+	echo "  state         Access to state control commands"
+  echo "     ∟ save          Saves the current state of the port forwarding list"
+  echo "     ∟ restore       Restores the state that was saved from the port forward list"
+	echo "     ∟ remove        Removes the state that was saved from the port forward list"
+  echo
+  echo "Run 'kpf -h COMMAND SUBCMD' for more information on a command."
+  echo
+  awk -v cols=`tput cols` 'BEGIN{for(c=0;c<cols;c++) printf "="; printf ORS }'
+  exit 0
+}
+
+if [ $# -eq 0 ]; then
+  usage
+fi
+
+while [ ! $# -eq 0 ]
+do
+	case "$1" in
+    --version | -v)
+			echo $VERSION
+    ;;
+		--help | -h)
+      if [ -z $2 ]; then
+        usage
+      else
+				shift
+        run_cmd $@ help
+        break
+      fi
+    ;;
+		--address | -a)
+			ADDRESS=$2
+			shift
+		;;
+    *)
+      if [[ "$1" == "-"* || "$1" == "--"* ]]; then
+        echo "Invalid option: $1" >&2
+        exit 1
+      fi
+
+			run_cmd $@
+      break
+    ;;
+	esac
+	shift
+done
+
+#END CLI  ----------------------------------------------
