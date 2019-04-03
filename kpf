@@ -6,6 +6,13 @@ find_process_port() {
 	sh -c 'lsof -n -i :'$1' | grep LISTEN'
 }
 
+is_installed() {
+	if ! [ -x "$(command -v $1)" ]; then
+		echo "Error: $1 is not installed." >&2
+		return 1
+	fi
+}
+
 #END UTILS
 
 # BEGIN METHODS
@@ -273,6 +280,16 @@ kube_port_forward_remove() {
 }
 
 # END METHODS
+
+# BEGIN CHECK DEPENDENCIES
+
+dependencies="kubectl jq"
+
+for dep in $dependencies; do
+  if ! is_installed $dep; then exit 1; fi
+done
+
+# END CHECK DEPENDENCIES
 
 #BEGIN CLI ---------------------------------------------
 VERSION="v1.0.0"

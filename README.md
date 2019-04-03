@@ -6,6 +6,11 @@ KPF is a tool to assist in port redirects made through port-forward kubectl, kee
 
 ## Getting started
 
+### Required dependencies
+
+- [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl/)
+- [jq](https://stedolan.github.io/jq/)
+
 ### Install KPF
 
 ```sh
