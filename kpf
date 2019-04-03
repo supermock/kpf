@@ -118,7 +118,8 @@ EOF
 					mv "$TMPFILE" $KUBE_PORT_FORWARDRC
 				fi
 
-				RESOURCE_NAME=`ps -p $(echo $PORT_STATUS | head -n 1 | cut -f2 -d' ') -o args --no-headers | cut -f5 -d' '`
+				local RESOURCE_NAME_COLUMN=$([ "$ADDRESS" = "" ] && echo "5" || echo "6")
+				RESOURCE_NAME=`ps -p $(echo $PORT_STATUS | head -n 1 | cut -f2 -d' ') -o args --no-headers | cut -f$RESOURCE_NAME_COLUMN -d' '`
 				local TMPFILE=$(mktemp)
 				jq \
 				--arg namespace "$NAMESPACE" \
