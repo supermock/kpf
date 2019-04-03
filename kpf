@@ -298,6 +298,7 @@ VERSION="v1.0.0"
 ADDRESS=""
 
 run_cmd() {
+	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
   local CMD=$1
   shift
 
