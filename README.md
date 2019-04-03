@@ -39,7 +39,19 @@ Removing a port forward
 $ kpf del kube-system k8s-app=kubernetes-dashboard
 ```
 
-For more examples, see the help...
+Saving a current port forward state
+
+```sh
+$ kpf state save my-forwards
+```
+
+Restoring port forward from state
+
+```sh
+$ kpf state restore my-forwards
+```
+
+For more information, see the help...
 
 ## License
 
