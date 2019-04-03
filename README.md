@@ -18,6 +18,8 @@ $ curl -L https://github.com/supermock/kpf/releases/download/v1.0/kpf -o /usr/lo
 $ chmod +x /usr/local/bin/kpf
 ```
 
+> **Note:** If you have installed the completions of kubectl and you are not able to access the kpf command, add to your bashrc or zshrc `unalias kpf`
+
 ### Some examples
 
 Adding a port forward
