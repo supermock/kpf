@@ -221,6 +221,10 @@ kube_port_forward_list() {
     '.data | keys[] as $k | .[$k][]? | [.namespace, .selector, .resource_name, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
     awk -v cols=`tput cols` -v FS=" " 'BEGIN{mlen=int(cols/6);printf "%-*s%-*s%-*s%-*s%-*s%-*s%s",mlen,"Namespace",int(mlen + mlen/2),"Selector",int(mlen * 2),"Resource Name",int(mlen/2),"Local Port",int(mlen/2),"Cluster Port",int(mlen/2),"Type",ORS;for(c=0;c<cols;c++) printf "="; printf ORS}{gsub(/"/, "", $1);gsub(/"/, "", $2);gsub(/"/, "", $3);gsub(/"/, "", $4);gsub(/"/, "", $5);gsub(/"/, "", $6);printf "%-*s%-*s%-*s%-*s%-*s%-*s%s",mlen,$1,int(mlen + mlen/2),$2,int(mlen * 2),$3,int(mlen/2),$4,int(mlen/2),$5,int(mlen/2),$6,ORS}'
   else
+		if [ `jq --arg namespace $NAMESPACE '.data[$namespace] | length' $KUBE_PORT_FORWARDRC` -eq 0 ]; then
+			echo "There are no active port forwarders for namespace $NAMESPACE"; return 0
+		fi
+
     jq -r \
 		--arg namespace "$NAMESPACE" \
 		'.data[$namespace][]? | [.namespace, .selector, .resource_name, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
@@ -228,13 +232,13 @@ kube_port_forward_list() {
   fi
 }
 
-kube_port_forward_save() {
+kube_port_forward_state_save() {
 	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
 
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
-		echo "kpf save [save_name]"; return 1
+		echo "kpf state save [save_name]"; return 1
 	fi
 
 	if [ `jq '.data | length' $KUBE_PORT_FORWARDRC` -eq 0 ]; then
@@ -248,13 +252,13 @@ kube_port_forward_save() {
 	echo "kpf state save success!"
 }
 
-kube_port_forward_restore() {
+kube_port_forward_state_restore() {
 	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
 
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
-		echo "kpf restore [save_name]"; return 1
+		echo "kpf state restore [save_name]"; return 1
 	fi
 
 	local ENTRY=`jq --arg save_name $SAVE_NAME '.save[$save_name]' $KUBE_PORT_FORWARDRC`
@@ -271,13 +275,13 @@ kube_port_forward_restore() {
 		echo "kpf state restore success!"
 }
 
-kube_port_forward_remove() {
+kube_port_forward_state_remove() {
 	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
 
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
-		echo "kpf remove [save_name]"; return 1
+		echo "kpf state remove [save_name]"; return 1
 	fi
 
 	local ENTRY=`jq --arg save_name $SAVE_NAME '.save[$save_name]' $KUBE_PORT_FORWARDRC`
@@ -290,6 +294,34 @@ kube_port_forward_remove() {
 	mv "$TMPFILE" $KUBE_PORT_FORWARDRC
 
 	echo "kpf state remove success!"
+}
+
+kube_port_forward_state_list() {
+	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
+
+	local SAVE_NAME=$1
+
+	if [ "$1" = "help" ]; then
+		echo "kpf state list [save_name?]"; return 1
+	fi
+
+	if [ -z $SAVE_NAME ]; then
+		jq -r \
+		'.save | keys | @csv' $KUBE_PORT_FORWARDRC | \
+		xargs -d "," -I{} bash -c "$(declare -f kube_port_forward_state_list); echo; kube_port_forward_state_list {}"
+  else
+		local ENTRY=`jq --arg save_name $SAVE_NAME '.save[$save_name]' $KUBE_PORT_FORWARDRC`
+		if [ "$ENTRY" = "null" ]; then
+			echo "The save $SAVE_NAME does not exist"; return 1
+		fi
+
+		awk -v sn="$SAVE_NAME" -v cols=`tput cols` 'BEGIN{cols=cols-length(sn)-1; printf "%s ", sn; for(c=0;c<cols;c++) { printf "=" }; printf ORS }'
+
+    jq -r \
+		--arg save_name "$SAVE_NAME" \
+		'.save[$save_name] | keys[] as $k | .[$k][]? | [.namespace, .selector, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
+		awk -v cols=`tput cols` -v FS=" " 'BEGIN{mlen=int(cols/5);printf "%-*s%-*s%-*s%-*s%-*s%s",mlen,"Namespace",int(mlen + mlen/2),"Selector",mlen,"Local Port",mlen,"Cluster Port",int(mlen/2),"Type",ORS;for(c=0;c<cols;c++) printf "="; printf ORS}{gsub(/"/, "", $1);gsub(/"/, "", $2);gsub(/"/, "", $3);gsub(/"/, "", $4);gsub(/"/, "", $5);printf "%-*s%-*s%-*s%-*s%-*s%s",mlen,$1,int(mlen + mlen/2),$2,mlen,$3,mlen,$4,int(mlen/2),$5,ORS}'
+  fi
 }
 
 # END METHODS
@@ -305,7 +337,7 @@ done
 # END CHECK DEPENDENCIES
 
 #BEGIN CLI ---------------------------------------------
-VERSION="v1.0.0"
+VERSION="v1.1.2"
 
 # Options
 ADDRESS=""
@@ -344,13 +376,16 @@ run_cmd() {
 			shift
 			case "$SUBCMD" in
 				save)
-					kube_port_forward_save $@
+					kube_port_forward_state_save $@
 				;;
 				restore)
-					kube_port_forward_restore $@
+					kube_port_forward_state_restore $@
 				;;
 				remove)
-					kube_port_forward_remove $@
+					kube_port_forward_state_remove $@
+				;;
+				list)
+					kube_port_forward_state_list $@
 				;;
 				*)
 					echo "Command $SUBCMD not found"
@@ -382,6 +417,7 @@ usage() {
   echo "     ∟ save          Saves the current state of the port forwarding list"
   echo "     ∟ restore       Restores the state that was saved from the port forward list"
 	echo "     ∟ remove        Removes the state that was saved from the port forward list"
+	echo "     ∟ list          List the state that was saved from the port forward list"
   echo
   echo "Run 'kpf -h COMMAND SUBCMD' for more information on a command."
   echo
