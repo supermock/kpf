@@ -107,6 +107,8 @@ EOF
 
 	if [ "$PORT_STATUS" != "" ]; then return 0; fi
 
+	echo "Adding port forward for $SELECTOR->$LOCAL_PORT"
+
 	local i=0
 	while [ $i -lt 5 ]; do
 		local PORT_STATUS=`find_process_port $LOCAL_PORT`
@@ -255,6 +257,11 @@ kube_port_forward_restore() {
 		echo "kpf restore [save_name]"; return 1
 	fi
 
+	local ENTRY=`jq --arg save_name $SAVE_NAME '.save[$save_name]' $KUBE_PORT_FORWARDRC`
+	if [ "$ENTRY" = "null" ]; then
+		echo "The save $SAVE_NAME does not exist"; return 1
+	fi
+
 	jq -r \
 	--arg save_name "$SAVE_NAME" \
     '.save[$save_name] | keys[] as $k | .[$k][]? | [.namespace, .selector, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
@@ -271,6 +278,11 @@ kube_port_forward_remove() {
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
 		echo "kpf remove [save_name]"; return 1
+	fi
+
+	local ENTRY=`jq --arg save_name $SAVE_NAME '.save[$save_name]' $KUBE_PORT_FORWARDRC`
+	if [ "$ENTRY" = "null" ]; then
+		echo "The save $SAVE_NAME does not exist"; return 1
 	fi
 
 	local TMPFILE=$(mktemp)
