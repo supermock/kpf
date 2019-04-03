@@ -14,7 +14,7 @@ KPF is a tool to assist in port redirects made through port-forward kubectl, kee
 ### Install KPF
 
 ```sh
-$ curl -L https://github.com/supermock/kpf/releases/download/v1.0/kpf -o /usr/local/bin/kpf
+$ curl -L https://github.com/supermock/kpf/releases/download/v1.1.2/kpf -o /usr/local/bin/kpf
 $ chmod +x /usr/local/bin/kpf
 ```
 
