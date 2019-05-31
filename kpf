@@ -324,6 +324,38 @@ kube_port_forward_state_list() {
   fi
 }
 
+kube_port_forward_update() {
+	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
+
+	local VERSION=$1
+
+	local OUTPUTPATH=$(which kpf)
+	
+	if echo "$OUTPUTPATH" | grep -q "no kpf";  then
+		echo "kpf not found!"; return 1
+	fi
+
+	local URL=https://github.com/supermock/kpf/releases/download/$VERSION/kpf
+
+	if [ "$1" = "help" ] || [ -z $VERSION ]; then
+		echo "kpf update [version?]"; return 1
+	else
+		echo $URL
+		status=$(curl -I $URL --silent | grep Status)
+		if echo "$status" | grep -q 404; then 
+				echo "Error on update, please check the permitions to $OUTPUTPATH or check the version -> https://github.com/supermock/kpf/releases"; return 1
+		else 
+			permition=$(ls -lah $OUTPUTPATH)
+			if echo "$permition" | grep -q root; then 
+				sudo curl -L $URL -o $OUTPUTPATH --silent
+			else
+				curl -L $URL -o $OUTPUTPATH --silent
+			fi				
+			echo "kpf update success!"
+		fi
+  fi
+}
+
 # END METHODS
 
 # BEGIN CHECK DEPENDENCIES
@@ -391,6 +423,9 @@ run_cmd() {
 					echo "Command $SUBCMD not found"
 				;;
 			esac
+		;;
+		update)
+			kube_port_forward_update $@
 		;;
     *)
       echo "Command $CMD not found"
