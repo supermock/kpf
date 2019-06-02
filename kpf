@@ -325,31 +325,29 @@ kube_port_forward_state_list() {
 }
 
 kube_port_forward_update() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
 	local VERSION=$1
 
-	local OUTPUTPATH=$(which kpf)
-	
-	if echo "$OUTPUTPATH" | grep -q "no kpf";  then
-		echo "kpf not found!"; return 1
+	if ! foobar_loc="$(type -p "kpf")" || [[ -z $foobar_loc ]]; then
+		echo "kpf isn't in \$PATH!"; return 1
 	fi
+
+	local OUTPUT_PATH=$(which kpf)
 
 	local URL=https://github.com/supermock/kpf/releases/download/$VERSION/kpf
 
 	if [ "$1" = "help" ] || [ -z $VERSION ]; then
-		echo "kpf update [version?]"; return 1
+		echo "kpf update [version]"; return 1
 	else
 		echo $URL
-		status=$(curl -I $URL --silent | grep Status)
+		status=$(curl -Lo /dev/null -s -w "%{http_code}\n" $URL)
 		if echo "$status" | grep -q 404; then 
-				echo "Error on update, please check the permitions to $OUTPUTPATH or check the version -> https://github.com/supermock/kpf/releases"; return 1
+			echo "Error on update, version $VERSION not found. See more: https://github.com/supermock/kpf/releases"; return 1
 		else 
-			permition=$(ls -lah $OUTPUTPATH)
+			permition=$(stat -c '%G' $OUTPUT_PATH)
 			if echo "$permition" | grep -q root; then 
-				sudo curl -L $URL -o $OUTPUTPATH --silent
+				sudo curl -L $URL -o $OUTPUT_PATH --silent
 			else
-				curl -L $URL -o $OUTPUTPATH --silent
+				curl -L $URL -o $OUTPUT_PATH --silent
 			fi				
 			echo "kpf update success!"
 		fi
@@ -379,7 +377,7 @@ run_cmd() {
   local CMD=$1
   shift
 
-  if [ "$CMD" != "add" ]; then
+  if [ "$CMD" != "add" ] | [ "$CMD" != "update" ]; then
     if [ ! -f $KUBE_PORT_FORWARDRC ]; then
       echo "First do port forwarding"; return 1
     fi
@@ -397,6 +395,9 @@ run_cmd() {
 		;;
 		list)
 			kube_port_forward_list $@
+		;;
+		update)
+			kube_port_forward_update $@
 		;;
 		state)
 			local SUBCMD=$1
@@ -424,9 +425,6 @@ run_cmd() {
 				;;
 			esac
 		;;
-		update)
-			kube_port_forward_update $@
-		;;
     *)
       echo "Command $CMD not found"
     ;;
@@ -448,6 +446,7 @@ usage() {
   echo "  del           Removes an existing port forwarding"
   echo "  delall        Removes all existing port forwarders"
   echo "  list          Lists all port forwarding performed"
+	echo "  update        Update the kpf to the version provided"
 	echo "  state         Access to state control commands"
   echo "     ∟ save          Saves the current state of the port forwarding list"
   echo "     ∟ restore       Restores the state that was saved from the port forward list"
