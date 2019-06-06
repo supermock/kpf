@@ -306,6 +306,10 @@ kube_port_forward_state_list() {
 	fi
 
 	if [ -z $SAVE_NAME ]; then
+		if [ "$(jq -r '.save | keys | length' $KUBE_PORT_FORWARDRC)" = "0" ]; then
+			echo "There are no saves to list"; return 0
+		fi
+
 		jq -r \
 		'.save | keys | @csv' $KUBE_PORT_FORWARDRC | \
 		xargs -d "," -I{} bash -c "$(declare -f kube_port_forward_state_list); echo; kube_port_forward_state_list {}"
@@ -369,7 +373,7 @@ run_cmd() {
 		state)
 			local SUBCMD=$1
 
-			if [ "$SUBCMD" = "help" ]; then
+			if [ "$SUBCMD" = "help" ] || [ "$SUBCMD" = "" ]; then
 				echo "kpf state [subcmd]"; return 1
 			fi
 
