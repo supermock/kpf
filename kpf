@@ -325,33 +325,26 @@ kube_port_forward_state_list() {
 }
 
 kube_port_forward_update() {
-	local VERSION=$1
-
-	if ! foobar_loc="$(type -p "kpf")" || [[ -z $foobar_loc ]]; then
-		echo "kpf isn't in \$PATH!"; return 1
-	fi
-
-	local OUTPUT_PATH=$(which kpf)
+	local VERSION="v$1"
 
 	local URL=https://github.com/supermock/kpf/releases/download/$VERSION/kpf
+	local OUTPUT_PATH=$0
 
 	if [ "$1" = "help" ] || [ -z $VERSION ]; then
 		echo "kpf update [version]"; return 1
-	else
-		echo $URL
-		status=$(curl -Lo /dev/null -s -w "%{http_code}\n" $URL)
-		if echo "$status" | grep -q 404; then 
-			echo "Error on update, version $VERSION not found. See more: https://github.com/supermock/kpf/releases"; return 1
-		else 
-			permition=$(stat -c '%G' $OUTPUT_PATH)
-			if echo "$permition" | grep -q root; then 
-				sudo curl -L $URL -o $OUTPUT_PATH --silent
-			else
-				curl -L $URL -o $OUTPUT_PATH --silent
-			fi				
-			echo "kpf update success!"
-		fi
-  fi
+	fi
+
+	if [ "$(curl -Lo /dev/null -s -w "%{http_code}\n" $URL)" = "404" ]; then 
+		echo "Failed on update! Version $VERSION not found. See more: https://github.com/supermock/kpf/releases"; return 1
+	fi
+
+	echo "Downloading from $URL"
+
+	local SUDO=$([ "$(stat -c '%G' $OUTPUT_PATH)" = "root" ] && echo sudo)
+
+	$SUDO curl -L $URL -o $OUTPUT_PATH --silent
+
+	echo "kpf update success!"
 }
 
 # END METHODS
