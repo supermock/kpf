@@ -328,6 +328,29 @@ kube_port_forward_state_list() {
   fi
 }
 
+kube_port_forward_update() {
+	local VERSION="v$1"
+
+	local URL=https://github.com/supermock/kpf/releases/download/$VERSION/kpf
+	local OUTPUT_PATH=$0
+
+	if [ "$1" = "help" ] || [ -z $VERSION ]; then
+		echo "kpf update [version]"; return 1
+	fi
+
+	if [ "$(curl -Lo /dev/null -s -w "%{http_code}\n" $URL)" = "404" ]; then 
+		echo "Failed on update! Version $VERSION not found. See more: https://github.com/supermock/kpf/releases"; return 1
+	fi
+
+	echo "Downloading from $URL"
+
+	local SUDO=$([ "$(stat -c '%G' $OUTPUT_PATH)" = "root" ] && echo sudo)
+
+	$SUDO curl -L $URL -o $OUTPUT_PATH --silent
+
+	echo "kpf update success!"
+}
+
 # END METHODS
 
 # BEGIN CHECK DEPENDENCIES
@@ -351,7 +374,7 @@ run_cmd() {
   local CMD=$1
   shift
 
-  if [ "$CMD" != "add" ]; then
+  if [ "$CMD" != "add" ] | [ "$CMD" != "update" ]; then
     if [ ! -f $KUBE_PORT_FORWARDRC ]; then
       echo "First do port forwarding"; return 1
     fi
@@ -369,6 +392,9 @@ run_cmd() {
 		;;
 		list)
 			kube_port_forward_list $@
+		;;
+		update)
+			kube_port_forward_update $@
 		;;
 		state)
 			local SUBCMD=$1
@@ -417,6 +443,7 @@ usage() {
   echo "  del           Removes an existing port forwarding"
   echo "  delall        Removes all existing port forwarders"
   echo "  list          Lists all port forwarding performed"
+	echo "  update        Update the kpf to the version provided"
 	echo "  state         Access to state control commands"
   echo "     ∟ save          Saves the current state of the port forwarding list"
   echo "     ∟ restore       Restores the state that was saved from the port forward list"

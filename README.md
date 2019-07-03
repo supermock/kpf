@@ -53,6 +53,12 @@ Restoring port forward from state
 $ kpf state restore my-forwards
 ```
 
+Update kpf to another version
+
+```sh
+$ kpf update v1.1.2
+```
+
 For more information, see the help...
 
 ## License
