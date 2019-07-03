@@ -56,7 +56,7 @@ $ kpf state restore my-forwards
 Update kpf to another version
 
 ```sh
-$ kpf update v1.1.2
+$ kpf update 1.1.2
 ```
 
 For more information, see the help...
