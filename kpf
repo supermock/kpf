@@ -364,7 +364,7 @@ done
 # END CHECK DEPENDENCIES
 
 #BEGIN CLI ---------------------------------------------
-VERSION="v1.1.2"
+VERSION="v1.2.0"
 
 # Options
 ADDRESS=""
