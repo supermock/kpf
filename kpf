@@ -334,7 +334,7 @@ kube_port_forward_update() {
 	local URL=https://github.com/supermock/kpf/releases/download/$VERSION/kpf
 	local OUTPUT_PATH=$0
 
-	if [ "$1" = "help" ] || [ -z $VERSION ]; then
+	if [ "$1" = "help" ] || [ "$VERSION" = "v" ]; then
 		echo "kpf update [version]"; return 1
 	fi
 
