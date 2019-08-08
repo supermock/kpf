@@ -332,7 +332,8 @@ kube_port_forward_update() {
 	local VERSION="v$1"
 
 	local URL=https://github.com/supermock/kpf/releases/download/$VERSION/kpf
-	local OUTPUT_PATH=$0
+	local CURRENT_PATH=$0
+	local OUTPUT_PATH=/tmp/kpf
 
 	if [ "$1" = "help" ] || [ "$VERSION" = "v" ]; then
 		echo "kpf update [version]"; return 1
@@ -344,9 +345,12 @@ kube_port_forward_update() {
 
 	echo "Downloading from $URL"
 
-	local SUDO=$([ "$(stat -c '%G' $OUTPUT_PATH)" = "root" ] && echo sudo)
+	local SUDO=$([ "$(stat -c '%G' $CURRENT_PATH)" = "root" ] && echo sudo)
 
-	$SUDO curl -L $URL -o $OUTPUT_PATH --silent
+	curl --silent -Lo $OUTPUT_PATH $URL
+
+	echo "Updating script..."
+	$SUDO mv $OUTPUT_PATH $CURRENT_PATH
 
 	echo "kpf update success!"
 }
