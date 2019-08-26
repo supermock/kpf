@@ -6,6 +6,8 @@ find_process_port() {
 	sh -c 'lsof -n -i :'$1' | grep LISTEN'
 }
 
+export -f find_process_port
+
 is_installed() {
 	if ! [ -x "$(command -v $1)" ]; then
 		echo "Error: $1 is not installed." >&2
@@ -13,7 +15,142 @@ is_installed() {
 	fi
 }
 
-#END UTILS
+export -f is_installed
+
+# END UTILS
+
+# BEGIN LOGGER
+
+log() {
+	if [ $NOCOLOR -eq 0 ]; then
+		echo "$@" | sed \
+			-e "s/@red/$(tput setaf 1)/g" \
+			-e "s/@green/$(tput setaf 2)/g" \
+			-e "s/@yellow/$(tput setaf 3)/g" \
+			-e "s/@blue/$(tput setaf 4)/g" \
+			-e "s/@magenta/$(tput setaf 5)/g" \
+			-e "s/@cyan/$(tput setaf 6)/g" \
+			-e "s/@white/$(tput setaf 7)/g" \
+			-e "s/@reset/$(tput sgr0)/g" \
+			-e "s/@b/$(tput bold)/g" \
+			-e "s/@u/$(tput sgr 0 1)/g"
+	else
+		echo "$@" | sed \
+			-e "s/@red//g" \
+			-e "s/@green//g" \
+			-e "s/@yellow//g" \
+			-e "s/@blue//g" \
+			-e "s/@magenta//g" \
+			-e "s/@cyan//g" \
+			-e "s/@white//g" \
+			-e "s/@reset//g" \
+			-e "s/@b//g" \
+			-e "s/@u//g"
+	fi
+}
+
+export -f log
+
+linf() {
+	log "@b@cyan[KPF] @white$@@reset"
+}
+
+export -f linf
+
+lwar() {
+	log "@b@yellow[KPF] @white$@@reset"
+}
+
+export -f lwar
+
+lerr() {
+	log "@b@red[KPF] @white$@@reset"
+}
+
+export -f lerr
+
+# END LOGGER
+
+# BEGIN AUX
+
+kube_port_forward_list_output() {
+	awk -v FS=" " -v cols=`tput cols` -f <(cat - <<-'EOF'
+		function h(size) {
+			return gensub(/ /, "=", "g", sprintf("%-*s", size, ""))
+		}
+		function table(columns) {
+			return sprintf("%-*s%-*s%-*s%-*s%-*s%-*s", 
+					columns["s1"], columns["c1"],
+					columns["s2"], columns["c2"],
+					columns["s3"], columns["c3"],
+					columns["s4"], columns["c4"],
+					columns["s5"], columns["c5"],
+					columns["s6"], columns["c6"])
+		}
+		function rm_quote(text) {
+			return gensub(/"/, "", "g", text)
+		}
+		function color(text) {
+			cmd = "log "text
+			cmd | getline out
+			close(cmd)
+
+			return out
+		}
+		function ellipsis(text, maxsize) {
+			if (length(text) > maxsize) {
+					return substr(text, 1, maxsize-4)"... "
+			}
+			
+			return text
+		}
+		BEGIN {
+			print color("@b@white"h(cols)"@reset")
+
+			mlen = int(cols/6)
+			color_compensation = ENVIRON["NOCOLOR"] == 0 ? 9 : 0
+
+			columns["s1"] = int(mlen/2) + color_compensation
+			columns["c1"] = color("@b@greenNamespace")
+			columns["s2"] = int(mlen * 2)
+			columns["c2"] = "Selector"
+			columns["s3"] = int(mlen * 2)
+			columns["c3"] = "Resource Name"
+			columns["s4"] = int(mlen/2)
+			columns["c4"] = "Local Port"
+			columns["s5"] = int(mlen/2)
+			columns["c5"] = "Cluster Port"
+			columns["s6"] = int(mlen/2)
+			columns["c6"] = color("Type@reset")
+
+			print table(columns)
+			print color("@b@white"h(cols)"@reset")
+		} {
+			columns["s1"] = int(mlen/2) + color_compensation
+			columns["c1"] = color("@b@white"ellipsis(rm_quote($1), columns["s1"]))
+
+			columns["s2"] = int(mlen * 2)
+			columns["c2"] = ellipsis(rm_quote($2), columns["s2"])
+
+			columns["s3"] = int(mlen * 2)
+			columns["c3"] = ellipsis(rm_quote($3), columns["s3"])
+
+			columns["s4"] = int(mlen/2)
+			columns["c4"] = ellipsis(rm_quote($4), columns["s4"])
+
+			columns["s5"] = int(mlen/2)
+			columns["c5"] = ellipsis(rm_quote($5), columns["s5"])
+
+			columns["s6"] = int(mlen/2)
+			columns["c6"] = color(ellipsis(rm_quote($6), columns["s6"])"@reset")
+			
+			print table(columns)
+		}
+	EOF
+	)
+}
+
+# END AUX
 
 # BEGIN METHODS
 
@@ -36,11 +173,20 @@ EOF
 	local TYPE=$4
 
 	if [ "$1" = "help" ] || [ "$NAMESPACE" = "" ] || [ "$SELECTOR" = "" ] || [ "$LOCAL_PORT" = "" ] || [ "$CLUSTER_PORT" = "" ]; then
-		echo "kpf add [namespace] [selector] [port or local_port:cluster_port] [type?]"; return 1
+		linf "Supported types:"
+		linf "  - svc or service"
+		linf "  - rs or replicaset"
+		linf "  - deploy or deployment"
+		linf "Samples:"
+		linf "  - kpf add [namespace] [pod-selector]    [port]"
+		linf "  - kpf add [namespace] [service-name]    [port] svc"
+		linf "  - kpf add [namespace] [replicaset-name] [port] rs"
+		linf "  - kpf add [namespace] [deployment-name] [port] deploy"
+		linf "kpf add [namespace] [selector] [port or local_port:cluster_port] [type?]"; return 1
 	fi
 
 	if [ "$LOCAL_PORT" -lt "1024" ] && [ "$EUID" -ne 0 ]; then
-		echo "You can not run on a local port below 1024 without being root"; return 1
+		lwar "You can not run on a local port below 1024 without being root"; return 1
 	fi
 
 	local RESOURCE_NAME=""
@@ -48,7 +194,7 @@ EOF
 		deploy|deployment)
 			RESOURCE_NAME=$(kubectl -n $NAMESPACE get deployments $SELECTOR 2> /dev/null)
 			if [ "$RESOURCE_NAME" = "" ]; then
-				echo "$SELECTOR selector not found on deployments"; return 1
+				lwar "$SELECTOR selector not found on deployments"; return 1
 			fi
 			RESOURCE_NAME="deployment/$SELECTOR"
 			TYPE="deployment"
@@ -56,7 +202,7 @@ EOF
 		rs|replicaset)
 			RESOURCE_NAME=$(kubectl -n $NAMESPACE get rs $SELECTOR 2> /dev/null)
 			if [ "$RESOURCE_NAME" = "" ]; then
-				echo "$SELECTOR selector not found on replicasets"; return 1
+				lwar "$SELECTOR selector not found on replicasets"; return 1
 			fi
 			RESOURCE_NAME="rs/$SELECTOR"
 			TYPE="replicaset"
@@ -64,7 +210,7 @@ EOF
 		svc|service)
 			RESOURCE_NAME=$(kubectl -n $NAMESPACE get svc $SELECTOR 2> /dev/null)
 			if [ "$RESOURCE_NAME" = "" ]; then
-				echo "$SELECTOR selector not found on services"; return 1
+				lwar "$SELECTOR selector not found on services"; return 1
 			fi
 			RESOURCE_NAME="svc/$SELECTOR"
 			TYPE="service"
@@ -73,7 +219,7 @@ EOF
 			RESOURCE_NAME=$(kubectl -n $NAMESPACE get pod -l $SELECTOR -o jsonpath='{.items[0].metadata.name}' 2> /dev/null)
 			TYPE="pod"
 			if [ "$RESOURCE_NAME" = "" ]; then
-				echo "$SELECTOR selector not found on pods"; return 1
+				lwar "$SELECTOR selector not found on pods"; return 1
 			fi
 		;;
 	esac
@@ -81,16 +227,16 @@ EOF
 	local PORT_STATUS=`find_process_port $LOCAL_PORT`
 	local ENTRY=`jq --arg namespace $NAMESPACE --arg selector $SELECTOR '.data[$namespace][]? | select(.selector == $selector)' $KUBE_PORT_FORWARDRC`
   if [ "$ENTRY" != "" ] && [ "$PORT_STATUS" != "" ]; then
-    echo "$SELECTOR selector already has port forwarding in `echo $ENTRY | jq -r '.local_port'`"; return 0
+    lwar "$SELECTOR selector already has port forwarding in `echo $ENTRY | jq -r '.local_port'`"; return 0
   fi
 
 	ENTRY=`jq --arg local_port $LOCAL_PORT '.data | keys[] as $k | .[$k][]? | select(.local_port == $local_port)' $KUBE_PORT_FORWARDRC`
   if [ "$ENTRY" != "" ] && [ "`echo $ENTRY | jq -r '.selector'`" != "$SELECTOR" ]; then
-    echo "$LOCAL_PORT already has port forwarding in namespace `echo $ENTRY | jq -r '.namespace'` and `echo $ENTRY | jq -r '.selector'` selector"; return 0
+    lwar "$LOCAL_PORT already has port forwarding in namespace `echo $ENTRY | jq -r '.namespace'` and `echo $ENTRY | jq -r '.selector'` selector"; return 0
   fi
 
 	if  [ "$ENTRY" = "" ] && [ "$PORT_STATUS" != "" ]; then
-		echo "The `ps -p $(echo $PORT_STATUS | head -n 1 | cut -f2 -d' ') -o comm=` process is already using this port"; return 1
+		lwar "The `ps -p $(echo $PORT_STATUS | head -n 1 | cut -f2 -d' ') -o comm=` process is already using this port"; return 1
 	fi
 
 	local ARGS=""
@@ -102,12 +248,12 @@ EOF
 	(kubectl -n $NAMESPACE port-forward $ARGS $RESOURCE_NAME $LOCAL_PORT:$CLUSTER_PORT &> /dev/null &) &
 	local return_code=$?
 	if [ $return_code -ne 0 ]; then
-		echo "Failed to start port forwarding. Exit status: $return_code"; return $return_code
+		lerr "Failed to start port forwarding. Exit status: $return_code"; return $return_code
 	fi
 
 	if [ "$PORT_STATUS" != "" ]; then return 0; fi
 
-	echo "Adding port forward for $SELECTOR->$LOCAL_PORT"
+	linf "Adding port forward for $SELECTOR->$LOCAL_PORT"
 
 	local i=0
 	while [ $i -lt 5 ]; do
@@ -142,15 +288,17 @@ EOF
 				mv "$TMPFILE" $KUBE_PORT_FORWARDRC
 			fi
 
-			echo "kpf add success! $SELECTOR->$LOCAL_PORT"; return 0
+			linf "kpf add success! $SELECTOR->$LOCAL_PORT"; return 0
 		fi
-		echo "Waiting for the forward to stay active. `expr $i + 1`/5 tries... Next try in 3s"
+		linf "Waiting for the forward to stay active. `expr $i + 1`/5 tries... Next try in 3s"
 		i=`expr $i + 1`
 		sleep 3
 	done
 
-	echo "Maximum failed attempts reached"; return 1
+	lerr "Maximum failed attempts reached"; return 1
 }
+
+export -f kube_port_forward
 
 kube_port_forward_del() {
 	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
@@ -159,7 +307,7 @@ kube_port_forward_del() {
   local SELECTOR=$2
 
 	if [ "$1" = "help" ] || [ "$NAMESPACE" = "" ] || [ "$SELECTOR" = "" ]; then
-		echo "kpf del [namespace] [selector]"; return 1
+		linf "kpf del [namespace] [selector]"; return 1
 	fi
 
   local FIND_EXP=".data["'$namespace'"][]? | select(.selector == "'$selector'")"
@@ -170,7 +318,7 @@ kube_port_forward_del() {
       local PID_PROCESS=`echo $PORT_STATUS | head -n 1 | cut -f2 -d' '`
       kill -15 $PID_PROCESS
       if [ $? -ne 0 ]; then
-        echo "Failed on kill $SELECTOR listener"; return 1
+        lerr "Failed on kill $SELECTOR listener"; return 1
       fi
     fi
 
@@ -182,26 +330,30 @@ kube_port_forward_del() {
 			local TMPFILE=$(mktemp)
 			jq --arg namespace $NAMESPACE 'del(.data[$namespace])' $KUBE_PORT_FORWARDRC > $TMPFILE
 			mv "$TMPFILE" $KUBE_PORT_FORWARDRC
-			echo "No more port forwarding from the $NAMESPACE namespace"
+			linf "No more port forwarding from the $NAMESPACE namespace"
 		fi
 
-		echo "kpf del success! $SELECTOR"
+		linf "kpf del success! $SELECTOR"
   else
-    echo "$SELECTOR selector does not have port forwarding"
+    lwar "$SELECTOR selector does not have port forwarding"
   fi
 }
+
+export -f kube_port_forward_del
 
 kube_port_forward_delall() {
 	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
 
 	if [ "$1" = "help" ]; then
-		echo "kpf delall"; return 1
+		linf "kpf delall"; return 1
 	fi
 
 	jq -r \
     '.data | keys[] as $k | .[$k][]? | [.namespace, .selector] | @tsv' $KUBE_PORT_FORWARDRC | \
-		xargs -I{} bash -c "$(declare -f find_process_port); $(declare -f kube_port_forward_del); kube_port_forward_del {}"
+		xargs -I{} bash -c "kube_port_forward_del {}"
 }
+
+export -f kube_port_forward_delall
 
 kube_port_forward_list() {
 	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
@@ -209,28 +361,30 @@ kube_port_forward_list() {
   local NAMESPACE=$1
 
 	if [ "$1" = "help" ]; then
-		echo "kpf list [namespace?]"; return 1
+		linf "kpf list [namespace?]"; return 1
 	fi
 
 	if [ `jq '.data | length' $KUBE_PORT_FORWARDRC` -eq 0 ]; then
-		echo "There are no active port forwarders"; return 0
+		linf "There are no active port forwarders"; return 0
 	fi
 
   if [ -z $NAMESPACE ]; then
     jq -r \
     '.data | keys[] as $k | .[$k][]? | [.namespace, .selector, .resource_name, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
-    awk -v cols=`tput cols` -v FS=" " 'BEGIN{mlen=int(cols/6);printf "%-*s%-*s%-*s%-*s%-*s%-*s%s",mlen,"Namespace",int(mlen + mlen/2),"Selector",int(mlen * 2),"Resource Name",int(mlen/2),"Local Port",int(mlen/2),"Cluster Port",int(mlen/2),"Type",ORS;for(c=0;c<cols;c++) printf "="; printf ORS}{gsub(/"/, "", $1);gsub(/"/, "", $2);gsub(/"/, "", $3);gsub(/"/, "", $4);gsub(/"/, "", $5);gsub(/"/, "", $6);printf "%-*s%-*s%-*s%-*s%-*s%-*s%s",mlen,$1,int(mlen + mlen/2),$2,int(mlen * 2),$3,int(mlen/2),$4,int(mlen/2),$5,int(mlen/2),$6,ORS}'
+    kube_port_forward_list_output
   else
 		if [ `jq --arg namespace $NAMESPACE '.data[$namespace] | length' $KUBE_PORT_FORWARDRC` -eq 0 ]; then
-			echo "There are no active port forwarders for namespace $NAMESPACE"; return 0
+			linf "There are no active port forwarders for namespace $NAMESPACE"; return 0
 		fi
 
     jq -r \
 		--arg namespace "$NAMESPACE" \
 		'.data[$namespace][]? | [.namespace, .selector, .resource_name, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
-		awk -v cols=`tput cols` -v FS=" " 'BEGIN{mlen=int(cols/6);printf "%-*s%-*s%-*s%-*s%-*s%-*s%s",mlen,"Namespace",int(mlen + mlen/2),"Selector",int(mlen * 2),"Resource Name",int(mlen/2),"Local Port",int(mlen/2),"Cluster Port",int(mlen/2),"Type",ORS;for(c=0;c<cols;c++) printf "="; printf ORS}{gsub(/"/, "", $1);gsub(/"/, "", $2);gsub(/"/, "", $3);gsub(/"/, "", $4);gsub(/"/, "", $5);gsub(/"/, "", $6);printf "%-*s%-*s%-*s%-*s%-*s%-*s%s",mlen,$1,int(mlen + mlen/2),$2,int(mlen * 2),$3,int(mlen/2),$4,int(mlen/2),$5,int(mlen/2),$6,ORS}'
+		kube_port_forward_list_output
   fi
 }
+
+export -f kube_port_forward_list
 
 kube_port_forward_state_save() {
 	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
@@ -238,19 +392,21 @@ kube_port_forward_state_save() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
-		echo "kpf state save [save_name]"; return 1
+		linf "kpf state save [save_name]"; return 1
 	fi
 
 	if [ `jq '.data | length' $KUBE_PORT_FORWARDRC` -eq 0 ]; then
-		echo "There are no active port forwarders"; return 0
+		linf "There are no active port forwarders"; return 0
 	fi
 
 	local TMPFILE=$(mktemp)
 	jq --arg save_name "$SAVE_NAME" '.save += {($save_name): .data}' $KUBE_PORT_FORWARDRC > $TMPFILE
 	mv "$TMPFILE" $KUBE_PORT_FORWARDRC
 
-	echo "kpf state save success!"
+	linf "kpf state save success!"
 }
+
+export -f kube_port_forward_state_save
 
 kube_port_forward_state_restore() {
 	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
@@ -258,22 +414,24 @@ kube_port_forward_state_restore() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
-		echo "kpf state restore [save_name]"; return 1
+		linf "kpf state restore [save_name]"; return 1
 	fi
 
 	local ENTRY=`jq --arg save_name $SAVE_NAME '.save[$save_name]' $KUBE_PORT_FORWARDRC`
 	if [ "$ENTRY" = "null" ]; then
-		echo "The save $SAVE_NAME does not exist"; return 1
+		lwar "The save $SAVE_NAME does not exist"; return 1
 	fi
 
 	jq -r \
 	--arg save_name "$SAVE_NAME" \
     '.save[$save_name] | keys[] as $k | .[$k][]? | [.namespace, .selector, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
 		xargs printf "%s %s %s:%s %s\n" | \
-		xargs -I{} bash -c "$(declare -f find_process_port); $(declare -f kube_port_forward); kube_port_forward {}"
+		xargs -I{} bash -c "kube_port_forward {}"
 
-		echo "kpf state restore success!"
+		linf "kpf state restore success!"
 }
+
+export -f kube_port_forward_state_restore
 
 kube_port_forward_state_remove() {
 	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
@@ -281,20 +439,22 @@ kube_port_forward_state_remove() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
-		echo "kpf state remove [save_name]"; return 1
+		linf "kpf state remove [save_name]"; return 1
 	fi
 
 	local ENTRY=`jq --arg save_name $SAVE_NAME '.save[$save_name]' $KUBE_PORT_FORWARDRC`
 	if [ "$ENTRY" = "null" ]; then
-		echo "The save $SAVE_NAME does not exist"; return 1
+		lwar "The save $SAVE_NAME does not exist"; return 1
 	fi
 
 	local TMPFILE=$(mktemp)
 	jq --arg save_name "$SAVE_NAME" 'del(.save[$save_name])' $KUBE_PORT_FORWARDRC > $TMPFILE
 	mv "$TMPFILE" $KUBE_PORT_FORWARDRC
 
-	echo "kpf state remove success!"
+	linf "kpf state remove success!"
 }
+
+export -f kube_port_forward_state_remove
 
 kube_port_forward_state_list() {
 	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
@@ -302,48 +462,111 @@ kube_port_forward_state_list() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ]; then
-		echo "kpf state list [save_name?]"; return 1
+		linf "kpf state list [save_name?]"; return 1
 	fi
 
 	if [ -z $SAVE_NAME ]; then
 		if [ "$(jq -r '.save | keys | length' $KUBE_PORT_FORWARDRC)" = "0" ]; then
-			echo "There are no saves to list"; return 0
+			linf "There are no saves to list"; return 0
 		fi
 
 		jq -r \
 		'.save | keys | @csv' $KUBE_PORT_FORWARDRC | \
-		xargs -d "," -I{} bash -c "$(declare -f kube_port_forward_state_list); echo; kube_port_forward_state_list {}"
+		xargs -d "," -I{} bash -c "echo; kube_port_forward_state_list {}"
   else
 		local ENTRY=`jq --arg save_name $SAVE_NAME '.save[$save_name]' $KUBE_PORT_FORWARDRC`
 		if [ "$ENTRY" = "null" ]; then
-			echo "The save $SAVE_NAME does not exist"; return 1
+			lwar "The save $SAVE_NAME does not exist"; return 1
 		fi
-
-		awk -v sn="$SAVE_NAME" -v cols=`tput cols` 'BEGIN{cols=cols-length(sn)-1; printf "%s ", sn; for(c=0;c<cols;c++) { printf "=" }; printf ORS }'
 
     jq -r \
 		--arg save_name "$SAVE_NAME" \
 		'.save[$save_name] | keys[] as $k | .[$k][]? | [.namespace, .selector, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
-		awk -v cols=`tput cols` -v FS=" " 'BEGIN{mlen=int(cols/5);printf "%-*s%-*s%-*s%-*s%-*s%s",mlen,"Namespace",int(mlen + mlen/2),"Selector",mlen,"Local Port",mlen,"Cluster Port",int(mlen/2),"Type",ORS;for(c=0;c<cols;c++) printf "="; printf ORS}{gsub(/"/, "", $1);gsub(/"/, "", $2);gsub(/"/, "", $3);gsub(/"/, "", $4);gsub(/"/, "", $5);printf "%-*s%-*s%-*s%-*s%-*s%s",mlen,$1,int(mlen + mlen/2),$2,mlen,$3,mlen,$4,int(mlen/2),$5,ORS}'
+		awk -v FS=" " -v savename="$SAVE_NAME" -v cols=`tput cols` -f <(cat - <<-'EOF'
+			function h(size) {
+				return gensub(/ /, "=", "g", sprintf("%-*s", size, ""))
+			}
+			function table(columns) {
+				return sprintf("%-*s%-*s%-*s%-*s%-*s", 
+						columns["s1"], columns["c1"],
+						columns["s2"], columns["c2"],
+						columns["s3"], columns["c3"],
+						columns["s4"], columns["c4"],
+						columns["s5"], columns["c5"])
+			}
+			function rm_quote(text) {
+				return gensub(/"/, "", "g", text)
+			}
+			function color(text) {
+				cmd = "log "text
+				cmd | getline out
+				close(cmd)
+
+				return out
+			}
+			function ellipsis(text, maxsize) {
+				if (length(text) > maxsize) {
+						return substr(text, 1, maxsize-4)"... "
+				}
+				
+				return text
+			}
+			BEGIN {
+				print color("@b@white"savename), color(h(cols - length(savename) - 1)"@reset")
+
+				mlen = int(cols/5)
+				color_compensation = ENVIRON["NOCOLOR"] == 0 ? 9 : 0
+
+				columns["s1"] = mlen + color_compensation
+				columns["c1"] = color("@b@greenNamespace")
+				columns["s2"] = int(mlen + mlen/2)
+				columns["c2"] = "Selector"
+				columns["s3"] = mlen
+				columns["c3"] = "Local Port"
+				columns["s4"] = mlen
+				columns["c4"] = "Cluster Port"
+				columns["s5"] = int(mlen/2)
+				columns["c5"] = color("Type@reset")
+
+				print table(columns)
+				print color("@b@white"h(cols)"@reset")
+			} {
+				columns["s1"] = mlen + color_compensation
+				columns["c1"] = color("@b@white"ellipsis(rm_quote($1), columns["s1"]))
+				columns["s2"] = int(mlen + mlen/2)
+				columns["c2"] = ellipsis(rm_quote($2), columns["s2"])
+				columns["s3"] = mlen
+				columns["c3"] = ellipsis(rm_quote($3), columns["s3"])
+				columns["s4"] = mlen
+				columns["c4"] = ellipsis(rm_quote($4), columns["s4"])
+				columns["s5"] = int(mlen/2)
+				columns["c5"] = color(ellipsis(rm_quote($5), columns["s5"])"@reset")
+				
+				print table(columns)
+			}
+		EOF
+		)
   fi
 }
 
-kube_port_forward_update() {
-	local VERSION="v$1"
+export -f kube_port_forward_state_list
 
-	local URL=https://github.com/supermock/kpf/releases/download/$VERSION/kpf
+kube_port_forward_update() {
+	local NEW_VERSION="v$1"
+
+	local URL="https://github.com/supermock/kpf/releases/download/$NEW_VERSION/kpf"
 	local CURRENT_PATH=$0
 	local OUTPUT_PATH=/tmp/kpf
 
-	if [ "$1" = "help" ] || [ "$VERSION" = "v" ]; then
-		echo "kpf update [version]"; return 1
+	if [ "$1" = "help" ] || [ "$NEW_VERSION" = "v" ]; then
+		linf "kpf update [version]"; return 1
 	fi
 
 	if [ "$(curl -Lo /dev/null -s -w "%{http_code}\n" $URL)" = "404" ]; then 
-		echo "Failed on update! Version $VERSION not found. See more: https://github.com/supermock/kpf/releases"; return 1
+		lerr "Failed on update! Version $NEW_VERSION not found. See more: https://github.com/supermock/kpf/releases"; return 1
 	fi
 
-	echo "Downloading from $URL"
+	linf "Downloading from $URL"
 
 	local SUDO=$([ "$(stat -c '%G' $CURRENT_PATH)" = "root" ] && echo sudo)
 
@@ -355,8 +578,10 @@ kube_port_forward_update() {
 	echo "Giving execute permission to new version..."
 	$SUDO chmod +x $CURRENT_PATH
 
-	echo "kpf update success!"
+	linf "kpf update success!"
 }
+
+export -f kube_port_forward_update
 
 # END METHODS
 
@@ -370,11 +595,12 @@ done
 
 # END CHECK DEPENDENCIES
 
-#BEGIN CLI ---------------------------------------------
+# BEGIN CLI ---------------------------------------------
 VERSION="v1.2.2"
 
 # Options
-ADDRESS=""
+export ADDRESS=""
+export NOCOLOR=0
 
 run_cmd() {
 	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
@@ -383,7 +609,7 @@ run_cmd() {
 
   if [ "$CMD" != "add" ]; then
     if [ ! -f $KUBE_PORT_FORWARDRC ]; then
-      echo "First do port forwarding"; return 1
+      linf "First do port forwarding"; return 1
     fi
   fi
 
@@ -407,7 +633,7 @@ run_cmd() {
 			local SUBCMD=$1
 
 			if [ "$SUBCMD" = "help" ] || [ "$SUBCMD" = "" ]; then
-				echo "kpf state [subcmd]"; return 1
+				linf "kpf state [subcmd]"; return 1
 			fi
 
 			shift
@@ -425,12 +651,12 @@ run_cmd() {
 					kube_port_forward_state_list $@
 				;;
 				*)
-					echo "Command $SUBCMD not found"
+					lwar "Command $SUBCMD not found"
 				;;
 			esac
 		;;
     *)
-      echo "Command $CMD not found"
+      lwar "Command $CMD not found"
     ;;
   esac
 }
@@ -471,7 +697,7 @@ while [ ! $# -eq 0 ]
 do
 	case "$1" in
     --version | -v)
-			echo $VERSION
+			linf $VERSION
     ;;
 		--help | -h)
       if [ -z $2 ]; then
@@ -486,9 +712,12 @@ do
 			ADDRESS=$2
 			shift
 		;;
+		--no-color)
+			NOCOLOR=1
+		;;
     *)
       if [[ "$1" == "-"* || "$1" == "--"* ]]; then
-        echo "Invalid option: $1" >&2
+        lerr "Invalid option: $1" >&2
         exit 1
       fi
 
@@ -499,4 +728,4 @@ do
 	shift
 done
 
-#END CLI  ----------------------------------------------
+# END CLI  ----------------------------------------------
