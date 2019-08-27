@@ -2,12 +2,6 @@
 
 # BEGIN UTILS
 
-find_process_port() {
-	sh -c 'lsof -n -i :'$1' | grep LISTEN'
-}
-
-export -f find_process_port
-
 is_installed() {
 	if ! [ -x "$(command -v $1)" ]; then
 		echo "Error: $1 is not installed." >&2
@@ -16,6 +10,34 @@ is_installed() {
 }
 
 export -f is_installed
+
+find_process_port() {
+	local PORT=$1
+
+	if is_installed "ss"; then
+		if INFO=$(ss -tulpn | grep -E 'LISTEN.*:'$PORT); then
+			INFO=$(echo $INFO | cut -f7 -d' ')
+
+			if [ ! -z $INFO ]; then
+				echo $INFO | awk -v port=$PORT 'match($0, /\("([[:alpha:]]*)",pid=([[:digit:]]*),fd=[[:digit:]]*\)/, m) { print m[2], m[1], port }'
+			else
+				echo "- - $PORT"
+			fi
+		fi
+
+		return
+	fi
+
+	if is_installed "netstat"; then
+		if INFO=$(netstat -tulpn 2>/dev/null | grep -E ':'$PORT'.*LISTEN'); then
+			echo $INFO | cut -f7 -d' ' | awk -v port=$PORT -v FS='/' '{ print !$2 ? "-" : $1, !$2 ? "-" : $2, port }'
+		fi
+
+		return
+	fi
+}
+
+export -f find_process_port
 
 # END UTILS
 
@@ -236,7 +258,7 @@ EOF
   fi
 
 	if  [ "$ENTRY" = "" ] && [ "$PORT_STATUS" != "" ]; then
-		lwar "The `ps -p $(echo $PORT_STATUS | head -n 1 | cut -f2 -d' ') -o comm=` process is already using this port"; return 1
+		lwar "The `echo $PORT_STATUS | cut -f2 -d' '` process is already using this port"; return 1
 	fi
 
 	local ARGS=""
@@ -267,7 +289,7 @@ EOF
 				fi
 
 				local RESOURCE_NAME_COLUMN=$([ "$ADDRESS" = "" ] && echo "5" || echo "6")
-				RESOURCE_NAME=`ps -p $(echo $PORT_STATUS | head -n 1 | cut -f2 -d' ') -o args --no-headers | cut -f$RESOURCE_NAME_COLUMN -d' '`
+				RESOURCE_NAME=`ps -p $(echo $PORT_STATUS | cut -f1 -d' ') -o args --no-headers | cut -f$RESOURCE_NAME_COLUMN -d' '`
 				local TMPFILE=$(mktemp)
 				jq \
 				--arg namespace "$NAMESPACE" \
@@ -315,7 +337,7 @@ kube_port_forward_del() {
   if [ "$ENTRY" != "" ]; then
     local PORT_STATUS=`find_process_port $(echo $ENTRY | jq -r '.local_port')`
     if [ "$PORT_STATUS" != "" ]; then #finded
-      local PID_PROCESS=`echo $PORT_STATUS | head -n 1 | cut -f2 -d' '`
+      local PID_PROCESS=`echo $PORT_STATUS | cut -f1 -d' '`
       kill -15 $PID_PROCESS
       if [ $? -ne 0 ]; then
         lerr "Failed on kill $SELECTOR listener"; return 1
