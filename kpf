@@ -2,6 +2,18 @@
 
 # BEGIN UTILS
 
+timestamp() {
+	date +%s
+}
+
+export -f timestamp
+
+number_only() {
+	sed 's/[^0-9]*//g'
+}
+
+export -f number_only
+
 is_installed() {
 	if ! [ -x "$(command -v $1)" ]; then
 		echo "Error: $1 is not installed." >&2
@@ -95,6 +107,64 @@ export -f lerr
 
 # BEGIN AUX
 
+kpf_remote_version() {
+	curl --silent https://api.github.com/repos/supermock/kpf/releases/latest | jq -r .tag_name
+}
+
+export -f kpf_remote_version
+
+kpf_update_kube_port_forwardrc() {
+   if [[ $(jq 'has("update")' $KUBE_PORT_FORWARDRC) == "false" ]]; then
+      local TMPFILE=$(mktemp)
+      jq '. + {"update": { "has": false, "next_has": 0, "warn": true, "next_warn": 0 }}' $KUBE_PORT_FORWARDRC > $TMPFILE
+      mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
+   fi
+}
+
+export -f kpf_update_kube_port_forwardrc
+
+kpf_has_update() {
+	local CURRENT_VERSION=$(echo $VERSION | number_only)
+	local LATEST_VERSION=$(kpf_remote_version | number_only)
+
+	if [[ $LATEST_VERSION -le $CURRENT_VERSION ]]; then
+		return 1
+	fi
+}
+
+export -f kpf_has_update
+
+kpf_check_update() {
+   if [[ $(jq -r '.update.has' $KUBE_PORT_FORWARDRC) == "false" ]]; then
+      if [ $(timestamp) -gt $(jq -r '.update.next_has' $KUBE_PORT_FORWARDRC) ]; then
+         if kpf_has_update; then
+            local TMPFILE=$(mktemp)
+            jq '.update.has = true' $KUBE_PORT_FORWARDRC > $TMPFILE
+            mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
+         else
+            local TMPFILE=$(mktemp)
+            jq --arg next_has $(($(timestamp) + 10800)) '.update.next_has = $next_has' $KUBE_PORT_FORWARDRC > $TMPFILE
+            mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
+         fi
+      fi
+   fi
+
+   if [[ $(jq -r '.update.has' $KUBE_PORT_FORWARDRC) == "true" ]]; then
+      if [[ $(jq -r '.update.warn' $KUBE_PORT_FORWARDRC) == "true" ]]; then
+         if [ $(timestamp) -gt $(jq -r '.update.next_warn' $KUBE_PORT_FORWARDRC) ]; then
+            local REMOTE_VERSION=$(kpf_remote_version)
+            linf "New version available... Use: @yellowkpf update ${REMOTE_VERSION:1}"
+
+            local TMPFILE=$(mktemp)
+            jq --arg next_warn $(($(timestamp) + 432000)) '.update.next_warn = $next_warn' $KUBE_PORT_FORWARDRC > $TMPFILE
+            mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
+         fi
+      fi
+   fi
+}
+
+export -f kpf_check_update
+
 kpf_list_output() {
 	awk -v FS=" " -v cols=`tput cols` -f <(cat - <<-'EOF'
 		function h(size) {
@@ -172,6 +242,8 @@ kpf_list_output() {
 	)
 }
 
+export -f kpf_list_output
+
 # END AUX
 
 # BEGIN METHODS
@@ -181,7 +253,13 @@ kpf_add() {
 	  tee $KUBE_PORT_FORWARDRC &>/dev/null <<EOF
 {
 	"data": {},
-	"save": {}
+	"save": {},
+	"update": {
+		"has": false,
+		"next_has": 0,
+		"warn": true,
+		"next_warn": 0
+	}
 }
 EOF
 	fi
@@ -400,6 +478,38 @@ kpf_list() {
 
 export -f kpf_list
 
+kpf_update() {
+	local NEW_VERSION="v$1"
+
+	local URL="https://github.com/supermock/kpf/releases/download/$NEW_VERSION/kpf"
+	local CURRENT_PATH=$0
+	local OUTPUT_PATH=/tmp/kpf
+
+	if [ "$1" = "help" ] || [ "$NEW_VERSION" = "v" ]; then
+		linf "kpf update [version]"; return 1
+	fi
+
+	if [ "$(curl -Lo /dev/null -s -w "%{http_code}\n" $URL)" = "404" ]; then 
+		lerr "Failed on update! Version $NEW_VERSION not found. See more: https://github.com/supermock/kpf/releases"; return 1
+	fi
+
+	linf "Downloading from $URL"
+
+	local SUDO=$([ "$(stat -c '%G' $CURRENT_PATH)" = "root" ] && echo sudo)
+
+	curl --silent -Lo $OUTPUT_PATH $URL
+
+	echo "Updating script at $CURRENT_PATH..."
+	$SUDO mv $OUTPUT_PATH $CURRENT_PATH
+
+	echo "Giving execute permission to new version..."
+	$SUDO chmod +x $CURRENT_PATH
+
+	linf "kpf update success!"
+}
+
+export -f kpf_update
+
 kpf_state_save() {
 	local SAVE_NAME=$1
 
@@ -557,38 +667,6 @@ kpf_state_list() {
 
 export -f kpf_state_list
 
-kpf_update() {
-	local NEW_VERSION="v$1"
-
-	local URL="https://github.com/supermock/kpf/releases/download/$NEW_VERSION/kpf"
-	local CURRENT_PATH=$0
-	local OUTPUT_PATH=/tmp/kpf
-
-	if [ "$1" = "help" ] || [ "$NEW_VERSION" = "v" ]; then
-		linf "kpf update [version]"; return 1
-	fi
-
-	if [ "$(curl -Lo /dev/null -s -w "%{http_code}\n" $URL)" = "404" ]; then 
-		lerr "Failed on update! Version $NEW_VERSION not found. See more: https://github.com/supermock/kpf/releases"; return 1
-	fi
-
-	linf "Downloading from $URL"
-
-	local SUDO=$([ "$(stat -c '%G' $CURRENT_PATH)" = "root" ] && echo sudo)
-
-	curl --silent -Lo $OUTPUT_PATH $URL
-
-	echo "Updating script at $CURRENT_PATH..."
-	$SUDO mv $OUTPUT_PATH $CURRENT_PATH
-
-	echo "Giving execute permission to new version..."
-	$SUDO chmod +x $CURRENT_PATH
-
-	linf "kpf update success!"
-}
-
-export -f kpf_update
-
 # END METHODS
 
 # BEGIN CHECK DEPENDENCIES
@@ -697,6 +775,11 @@ usage() {
 
 if [ $# -eq 0 ]; then
   usage
+fi
+
+if [ -f $KUBE_PORT_FORWARDRC ]; then
+	kpf_update_kube_port_forwardrc
+	kpf_check_update
 fi
 
 while [ ! $# -eq 0 ]
