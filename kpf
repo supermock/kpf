@@ -2,11 +2,17 @@
 
 # BEGIN UTILS
 
-find_process_port() {
-	sh -c 'lsof -n -i :'$1' | grep LISTEN'
+timestamp() {
+	date +%s
 }
 
-export -f find_process_port
+export -f timestamp
+
+number_only() {
+	sed 's/[^0-9]*//g'
+}
+
+export -f number_only
 
 is_installed() {
 	if ! [ -x "$(command -v $1)" ]; then
@@ -16,6 +22,34 @@ is_installed() {
 }
 
 export -f is_installed
+
+find_process_port() {
+	local PORT=$1
+
+	if is_installed "ss"; then
+		if INFO=$(ss -tulpn | grep -E 'LISTEN.*:'$PORT); then
+			INFO=$(echo $INFO | cut -f7 -d' ')
+
+			if [ ! -z $INFO ]; then
+				echo $INFO | awk -v port=$PORT 'match($0, /\("([[:alpha:]]*)",pid=([[:digit:]]*),fd=[[:digit:]]*\)/, m) { print m[2], m[1], port }'
+			else
+				echo "- - $PORT"
+			fi
+		fi
+
+		return
+	fi
+
+	if is_installed "netstat"; then
+		if INFO=$(netstat -tulpn 2>/dev/null | grep -E ':'$PORT'.*LISTEN'); then
+			echo $INFO | cut -f7 -d' ' | awk -v port=$PORT -v FS='/' '{ print !$2 ? "-" : $1, !$2 ? "-" : $2, port }'
+		fi
+
+		return
+	fi
+}
+
+export -f find_process_port
 
 # END UTILS
 
@@ -73,7 +107,65 @@ export -f lerr
 
 # BEGIN AUX
 
-kube_port_forward_list_output() {
+kpf_remote_version() {
+	curl --silent https://api.github.com/repos/supermock/kpf/releases/latest | jq -r .tag_name
+}
+
+export -f kpf_remote_version
+
+kpf_update_kube_port_forwardrc() {
+   if [[ $(jq 'has("update")' $KUBE_PORT_FORWARDRC) == "false" ]]; then
+      local TMPFILE=$(mktemp)
+      jq '. + {"update": { "has": false, "next_has": 0, "warn": true, "next_warn": 0 }}' $KUBE_PORT_FORWARDRC > $TMPFILE
+      mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
+   fi
+}
+
+export -f kpf_update_kube_port_forwardrc
+
+kpf_has_update() {
+	local CURRENT_VERSION=$(echo $VERSION | number_only)
+	local LATEST_VERSION=$(kpf_remote_version | number_only)
+
+	if [[ $LATEST_VERSION -le $CURRENT_VERSION ]]; then
+		return 1
+	fi
+}
+
+export -f kpf_has_update
+
+kpf_check_update() {
+   if [[ $(jq -r '.update.has' $KUBE_PORT_FORWARDRC) == "false" ]]; then
+      if [ $(timestamp) -gt $(jq -r '.update.next_has' $KUBE_PORT_FORWARDRC) ]; then
+         if kpf_has_update; then
+            local TMPFILE=$(mktemp)
+            jq '.update.has = true' $KUBE_PORT_FORWARDRC > $TMPFILE
+            mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
+         else
+            local TMPFILE=$(mktemp)
+            jq --arg next_has $(($(timestamp) + 10800)) '.update.next_has = $next_has' $KUBE_PORT_FORWARDRC > $TMPFILE
+            mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
+         fi
+      fi
+   fi
+
+   if [[ $(jq -r '.update.has' $KUBE_PORT_FORWARDRC) == "true" ]]; then
+      if [[ $(jq -r '.update.warn' $KUBE_PORT_FORWARDRC) == "true" ]]; then
+         if [ $(timestamp) -gt $(jq -r '.update.next_warn' $KUBE_PORT_FORWARDRC) ]; then
+            local REMOTE_VERSION=$(kpf_remote_version)
+            linf "New version available... Use: @yellowkpf update ${REMOTE_VERSION:1}"
+
+            local TMPFILE=$(mktemp)
+            jq --arg next_warn $(($(timestamp) + 432000)) '.update.next_warn = $next_warn' $KUBE_PORT_FORWARDRC > $TMPFILE
+            mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
+         fi
+      fi
+   fi
+}
+
+export -f kpf_check_update
+
+kpf_list_output() {
 	awk -v FS=" " -v cols=`tput cols` -f <(cat - <<-'EOF'
 		function h(size) {
 			return gensub(/ /, "=", "g", sprintf("%-*s", size, ""))
@@ -150,18 +242,24 @@ kube_port_forward_list_output() {
 	)
 }
 
+export -f kpf_list_output
+
 # END AUX
 
 # BEGIN METHODS
 
-kube_port_forward() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_add() {
 	if [ ! -f $KUBE_PORT_FORWARDRC ]; then
 	  tee $KUBE_PORT_FORWARDRC &>/dev/null <<EOF
 {
 	"data": {},
-	"save": {}
+	"save": {},
+	"update": {
+		"has": false,
+		"next_has": 0,
+		"warn": true,
+		"next_warn": 0
+	}
 }
 EOF
 	fi
@@ -236,7 +334,7 @@ EOF
   fi
 
 	if  [ "$ENTRY" = "" ] && [ "$PORT_STATUS" != "" ]; then
-		lwar "The `ps -p $(echo $PORT_STATUS | head -n 1 | cut -f2 -d' ') -o comm=` process is already using this port"; return 1
+		lwar "The `echo $PORT_STATUS | cut -f2 -d' '` process is already using this port"; return 1
 	fi
 
 	local ARGS=""
@@ -267,7 +365,7 @@ EOF
 				fi
 
 				local RESOURCE_NAME_COLUMN=$([ "$ADDRESS" = "" ] && echo "5" || echo "6")
-				RESOURCE_NAME=`ps -p $(echo $PORT_STATUS | head -n 1 | cut -f2 -d' ') -o args --no-headers | cut -f$RESOURCE_NAME_COLUMN -d' '`
+				RESOURCE_NAME=`ps -p $(echo $PORT_STATUS | cut -f1 -d' ') -o args --no-headers | cut -f$RESOURCE_NAME_COLUMN -d' '`
 				local TMPFILE=$(mktemp)
 				jq \
 				--arg namespace "$NAMESPACE" \
@@ -298,11 +396,9 @@ EOF
 	lerr "Maximum failed attempts reached"; return 1
 }
 
-export -f kube_port_forward
+export -f kpf_add
 
-kube_port_forward_del() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_del() {
   local NAMESPACE=$1
   local SELECTOR=$2
 
@@ -315,7 +411,7 @@ kube_port_forward_del() {
   if [ "$ENTRY" != "" ]; then
     local PORT_STATUS=`find_process_port $(echo $ENTRY | jq -r '.local_port')`
     if [ "$PORT_STATUS" != "" ]; then #finded
-      local PID_PROCESS=`echo $PORT_STATUS | head -n 1 | cut -f2 -d' '`
+      local PID_PROCESS=`echo $PORT_STATUS | cut -f1 -d' '`
       kill -15 $PID_PROCESS
       if [ $? -ne 0 ]; then
         lerr "Failed on kill $SELECTOR listener"; return 1
@@ -339,25 +435,21 @@ kube_port_forward_del() {
   fi
 }
 
-export -f kube_port_forward_del
+export -f kpf_del
 
-kube_port_forward_delall() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_delall() {
 	if [ "$1" = "help" ]; then
 		linf "kpf delall"; return 1
 	fi
 
 	jq -r \
     '.data | keys[] as $k | .[$k][]? | [.namespace, .selector] | @tsv' $KUBE_PORT_FORWARDRC | \
-		xargs -I{} bash -c "kube_port_forward_del {}"
+		xargs -I{} bash -c "kpf_del {}"
 }
 
-export -f kube_port_forward_delall
+export -f kpf_delall
 
-kube_port_forward_list() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_list() {
   local NAMESPACE=$1
 
 	if [ "$1" = "help" ]; then
@@ -371,7 +463,7 @@ kube_port_forward_list() {
   if [ -z $NAMESPACE ]; then
     jq -r \
     '.data | keys[] as $k | .[$k][]? | [.namespace, .selector, .resource_name, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
-    kube_port_forward_list_output
+    kpf_list_output
   else
 		if [ `jq --arg namespace $NAMESPACE '.data[$namespace] | length' $KUBE_PORT_FORWARDRC` -eq 0 ]; then
 			linf "There are no active port forwarders for namespace $NAMESPACE"; return 0
@@ -380,15 +472,45 @@ kube_port_forward_list() {
     jq -r \
 		--arg namespace "$NAMESPACE" \
 		'.data[$namespace][]? | [.namespace, .selector, .resource_name, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
-		kube_port_forward_list_output
+		kpf_list_output
   fi
 }
 
-export -f kube_port_forward_list
+export -f kpf_list
 
-kube_port_forward_state_save() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
+kpf_update() {
+	local NEW_VERSION="v$1"
 
+	local URL="https://github.com/supermock/kpf/releases/download/$NEW_VERSION/kpf"
+	local CURRENT_PATH=$0
+	local OUTPUT_PATH=/tmp/kpf
+
+	if [ "$1" = "help" ] || [ "$NEW_VERSION" = "v" ]; then
+		linf "kpf update [version]"; return 1
+	fi
+
+	if [ "$(curl -Lo /dev/null -s -w "%{http_code}\n" $URL)" = "404" ]; then 
+		lerr "Failed on update! Version $NEW_VERSION not found. See more: https://github.com/supermock/kpf/releases"; return 1
+	fi
+
+	linf "Downloading from $URL"
+
+	local SUDO=$([ "$(stat -c '%G' $CURRENT_PATH)" = "root" ] && echo sudo)
+
+	curl --silent -Lo $OUTPUT_PATH $URL
+
+	echo "Updating script at $CURRENT_PATH..."
+	$SUDO mv $OUTPUT_PATH $CURRENT_PATH
+
+	echo "Giving execute permission to new version..."
+	$SUDO chmod +x $CURRENT_PATH
+
+	linf "kpf update success!"
+}
+
+export -f kpf_update
+
+kpf_state_save() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
@@ -406,11 +528,9 @@ kube_port_forward_state_save() {
 	linf "kpf state save success!"
 }
 
-export -f kube_port_forward_state_save
+export -f kpf_state_save
 
-kube_port_forward_state_restore() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_state_restore() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
@@ -426,16 +546,14 @@ kube_port_forward_state_restore() {
 	--arg save_name "$SAVE_NAME" \
     '.save[$save_name] | keys[] as $k | .[$k][]? | [.namespace, .selector, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
 		xargs printf "%s %s %s:%s %s\n" | \
-		xargs -I{} bash -c "kube_port_forward {}"
+		xargs -I{} bash -c "kpf_add {}"
 
 		linf "kpf state restore success!"
 }
 
-export -f kube_port_forward_state_restore
+export -f kpf_state_restore
 
-kube_port_forward_state_remove() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_state_remove() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
@@ -454,11 +572,9 @@ kube_port_forward_state_remove() {
 	linf "kpf state remove success!"
 }
 
-export -f kube_port_forward_state_remove
+export -f kpf_state_remove
 
-kube_port_forward_state_list() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_state_list() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ]; then
@@ -472,7 +588,7 @@ kube_port_forward_state_list() {
 
 		jq -r \
 		'.save | keys | @csv' $KUBE_PORT_FORWARDRC | \
-		xargs -d "," -I{} bash -c "echo; kube_port_forward_state_list {}"
+		xargs -d "," -I{} bash -c "echo; kpf_state_list {}"
   else
 		local ENTRY=`jq --arg save_name $SAVE_NAME '.save[$save_name]' $KUBE_PORT_FORWARDRC`
 		if [ "$ENTRY" = "null" ]; then
@@ -549,39 +665,7 @@ kube_port_forward_state_list() {
   fi
 }
 
-export -f kube_port_forward_state_list
-
-kube_port_forward_update() {
-	local NEW_VERSION="v$1"
-
-	local URL="https://github.com/supermock/kpf/releases/download/$NEW_VERSION/kpf"
-	local CURRENT_PATH=$0
-	local OUTPUT_PATH=/tmp/kpf
-
-	if [ "$1" = "help" ] || [ "$NEW_VERSION" = "v" ]; then
-		linf "kpf update [version]"; return 1
-	fi
-
-	if [ "$(curl -Lo /dev/null -s -w "%{http_code}\n" $URL)" = "404" ]; then 
-		lerr "Failed on update! Version $NEW_VERSION not found. See more: https://github.com/supermock/kpf/releases"; return 1
-	fi
-
-	linf "Downloading from $URL"
-
-	local SUDO=$([ "$(stat -c '%G' $CURRENT_PATH)" = "root" ] && echo sudo)
-
-	curl --silent -Lo $OUTPUT_PATH $URL
-
-	echo "Updating script at $CURRENT_PATH..."
-	$SUDO mv $OUTPUT_PATH $CURRENT_PATH
-
-	echo "Giving execute permission to new version..."
-	$SUDO chmod +x $CURRENT_PATH
-
-	linf "kpf update success!"
-}
-
-export -f kube_port_forward_update
+export -f kpf_state_list
 
 # END METHODS
 
@@ -596,14 +680,14 @@ done
 # END CHECK DEPENDENCIES
 
 # BEGIN CLI ---------------------------------------------
-VERSION="v1.2.2"
+export VERSION="v1.2.2"
+export KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
 
 # Options
 export ADDRESS=""
 export NOCOLOR=0
 
 run_cmd() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
   local CMD=$1
   shift
 
@@ -615,19 +699,19 @@ run_cmd() {
 
   case "$CMD" in
     add)
-			kube_port_forward $@
+			kpf_add $@
     ;;
 		del)
-			kube_port_forward_del $@
+			kpf_del $@
 		;;
 		delall)
-			kube_port_forward_delall $@
+			kpf_delall $@
 		;;
 		list)
-			kube_port_forward_list $@
+			kpf_list $@
 		;;
 		update)
-			kube_port_forward_update $@
+			kpf_update $@
 		;;
 		state)
 			local SUBCMD=$1
@@ -639,16 +723,16 @@ run_cmd() {
 			shift
 			case "$SUBCMD" in
 				save)
-					kube_port_forward_state_save $@
+					kpf_state_save $@
 				;;
 				restore)
-					kube_port_forward_state_restore $@
+					kpf_state_restore $@
 				;;
 				remove)
-					kube_port_forward_state_remove $@
+					kpf_state_remove $@
 				;;
 				list)
-					kube_port_forward_state_list $@
+					kpf_state_list $@
 				;;
 				*)
 					lwar "Command $SUBCMD not found"
@@ -691,6 +775,11 @@ usage() {
 
 if [ $# -eq 0 ]; then
   usage
+fi
+
+if [ -f $KUBE_PORT_FORWARDRC ]; then
+	kpf_update_kube_port_forwardrc
+	kpf_check_update
 fi
 
 while [ ! $# -eq 0 ]
