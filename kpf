@@ -680,7 +680,7 @@ done
 # END CHECK DEPENDENCIES
 
 # BEGIN CLI ---------------------------------------------
-export VERSION="v1.2.2"
+export VERSION="v1.3.0"
 export KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
 
 # Options
