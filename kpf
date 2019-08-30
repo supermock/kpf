@@ -95,7 +95,7 @@ export -f lerr
 
 # BEGIN AUX
 
-kube_port_forward_list_output() {
+kpf_list_output() {
 	awk -v FS=" " -v cols=`tput cols` -f <(cat - <<-'EOF'
 		function h(size) {
 			return gensub(/ /, "=", "g", sprintf("%-*s", size, ""))
@@ -176,9 +176,7 @@ kube_port_forward_list_output() {
 
 # BEGIN METHODS
 
-kube_port_forward() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_add() {
 	if [ ! -f $KUBE_PORT_FORWARDRC ]; then
 	  tee $KUBE_PORT_FORWARDRC &>/dev/null <<EOF
 {
@@ -320,11 +318,9 @@ EOF
 	lerr "Maximum failed attempts reached"; return 1
 }
 
-export -f kube_port_forward
+export -f kpf_add
 
-kube_port_forward_del() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_del() {
   local NAMESPACE=$1
   local SELECTOR=$2
 
@@ -361,25 +357,21 @@ kube_port_forward_del() {
   fi
 }
 
-export -f kube_port_forward_del
+export -f kpf_del
 
-kube_port_forward_delall() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_delall() {
 	if [ "$1" = "help" ]; then
 		linf "kpf delall"; return 1
 	fi
 
 	jq -r \
     '.data | keys[] as $k | .[$k][]? | [.namespace, .selector] | @tsv' $KUBE_PORT_FORWARDRC | \
-		xargs -I{} bash -c "kube_port_forward_del {}"
+		xargs -I{} bash -c "kpf_del {}"
 }
 
-export -f kube_port_forward_delall
+export -f kpf_delall
 
-kube_port_forward_list() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_list() {
   local NAMESPACE=$1
 
 	if [ "$1" = "help" ]; then
@@ -393,7 +385,7 @@ kube_port_forward_list() {
   if [ -z $NAMESPACE ]; then
     jq -r \
     '.data | keys[] as $k | .[$k][]? | [.namespace, .selector, .resource_name, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
-    kube_port_forward_list_output
+    kpf_list_output
   else
 		if [ `jq --arg namespace $NAMESPACE '.data[$namespace] | length' $KUBE_PORT_FORWARDRC` -eq 0 ]; then
 			linf "There are no active port forwarders for namespace $NAMESPACE"; return 0
@@ -402,15 +394,13 @@ kube_port_forward_list() {
     jq -r \
 		--arg namespace "$NAMESPACE" \
 		'.data[$namespace][]? | [.namespace, .selector, .resource_name, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
-		kube_port_forward_list_output
+		kpf_list_output
   fi
 }
 
-export -f kube_port_forward_list
+export -f kpf_list
 
-kube_port_forward_state_save() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_state_save() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
@@ -428,11 +418,9 @@ kube_port_forward_state_save() {
 	linf "kpf state save success!"
 }
 
-export -f kube_port_forward_state_save
+export -f kpf_state_save
 
-kube_port_forward_state_restore() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_state_restore() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
@@ -448,16 +436,14 @@ kube_port_forward_state_restore() {
 	--arg save_name "$SAVE_NAME" \
     '.save[$save_name] | keys[] as $k | .[$k][]? | [.namespace, .selector, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
 		xargs printf "%s %s %s:%s %s\n" | \
-		xargs -I{} bash -c "kube_port_forward {}"
+		xargs -I{} bash -c "kpf_add {}"
 
 		linf "kpf state restore success!"
 }
 
-export -f kube_port_forward_state_restore
+export -f kpf_state_restore
 
-kube_port_forward_state_remove() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_state_remove() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
@@ -476,11 +462,9 @@ kube_port_forward_state_remove() {
 	linf "kpf state remove success!"
 }
 
-export -f kube_port_forward_state_remove
+export -f kpf_state_remove
 
-kube_port_forward_state_list() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
-
+kpf_state_list() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ]; then
@@ -494,7 +478,7 @@ kube_port_forward_state_list() {
 
 		jq -r \
 		'.save | keys | @csv' $KUBE_PORT_FORWARDRC | \
-		xargs -d "," -I{} bash -c "echo; kube_port_forward_state_list {}"
+		xargs -d "," -I{} bash -c "echo; kpf_state_list {}"
   else
 		local ENTRY=`jq --arg save_name $SAVE_NAME '.save[$save_name]' $KUBE_PORT_FORWARDRC`
 		if [ "$ENTRY" = "null" ]; then
@@ -571,9 +555,9 @@ kube_port_forward_state_list() {
   fi
 }
 
-export -f kube_port_forward_state_list
+export -f kpf_state_list
 
-kube_port_forward_update() {
+kpf_update() {
 	local NEW_VERSION="v$1"
 
 	local URL="https://github.com/supermock/kpf/releases/download/$NEW_VERSION/kpf"
@@ -603,7 +587,7 @@ kube_port_forward_update() {
 	linf "kpf update success!"
 }
 
-export -f kube_port_forward_update
+export -f kpf_update
 
 # END METHODS
 
@@ -618,14 +602,14 @@ done
 # END CHECK DEPENDENCIES
 
 # BEGIN CLI ---------------------------------------------
-VERSION="v1.2.2"
+export VERSION="v1.2.2"
+export KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
 
 # Options
 export ADDRESS=""
 export NOCOLOR=0
 
 run_cmd() {
-	local KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
   local CMD=$1
   shift
 
@@ -637,19 +621,19 @@ run_cmd() {
 
   case "$CMD" in
     add)
-			kube_port_forward $@
+			kpf_add $@
     ;;
 		del)
-			kube_port_forward_del $@
+			kpf_del $@
 		;;
 		delall)
-			kube_port_forward_delall $@
+			kpf_delall $@
 		;;
 		list)
-			kube_port_forward_list $@
+			kpf_list $@
 		;;
 		update)
-			kube_port_forward_update $@
+			kpf_update $@
 		;;
 		state)
 			local SUBCMD=$1
@@ -661,16 +645,16 @@ run_cmd() {
 			shift
 			case "$SUBCMD" in
 				save)
-					kube_port_forward_state_save $@
+					kpf_state_save $@
 				;;
 				restore)
-					kube_port_forward_state_restore $@
+					kpf_state_restore $@
 				;;
 				remove)
-					kube_port_forward_state_remove $@
+					kpf_state_remove $@
 				;;
 				list)
-					kube_port_forward_state_list $@
+					kpf_state_list $@
 				;;
 				*)
 					lwar "Command $SUBCMD not found"
