@@ -4,6 +4,8 @@
 
 KPF is a tool to assist in port redirects made through port-forward kubectl, keeping the current state and giving it a more refined control, being able to even save a state of several active redirects and restore them later, among other functions.
 
+![Demo](demo.gif)
+
 ## Getting started
 
 ### Required dependencies
