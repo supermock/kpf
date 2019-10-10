@@ -495,7 +495,7 @@ kpf_update() {
 
 	linf "Downloading from $URL"
 
-	local SUDO=$([ "$(stat -c '%G' $CURRENT_PATH)" = "root" ] && echo sudo)
+	local SUDO=$([ "$(stat -c '%a' $CURRENT_PATH)" -gt 700 ] && echo sudo)
 
 	curl --silent -Lo $OUTPUT_PATH $URL
 
