@@ -500,15 +500,15 @@ kpf_update() {
 	curl --silent -Lo $OUTPUT_PATH $URL
 
 	linf "Updating script at $CURRENT_PATH..."
-	$SUDO mv $OUTPUT_PATH $CURRENT_PATH
+	$SUDO mv -f $OUTPUT_PATH $CURRENT_PATH
+
+	linf "Giving execute permission to new version..."
+	$SUDO chmod +x $CURRENT_PATH
 
 	linf "Updating config with new version..."
 	local TMPFILE=$(mktemp)
 	jq '.update.has = false' $KUBE_PORT_FORWARDRC > $TMPFILE
 	mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
-
-	linf "Giving execute permission to new version..."
-	$SUDO chmod +x $CURRENT_PATH
 
 	linf "kpf update success!"
 }
