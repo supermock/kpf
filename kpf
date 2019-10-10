@@ -98,7 +98,7 @@ lwar() {
 export -f lwar
 
 lerr() {
-	log "@b@red[KPF] @white$@@reset"
+	log "@b@red[KPF] @white$@@reset" >&2
 }
 
 export -f lerr
@@ -676,7 +676,7 @@ export -f kpf_state_list
 
 # BEGIN CHECK DEPENDENCIES
 
-dependencies="kubectl jq"
+dependencies="kubectl jq gawk"
 
 for dep in $dependencies; do
   if ! is_installed $dep; then exit 1; fi
@@ -685,7 +685,7 @@ done
 # END CHECK DEPENDENCIES
 
 # BEGIN CLI ---------------------------------------------
-export VERSION="v1.3.0"
+export VERSION="v1.3.1"
 export KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
 
 # Options

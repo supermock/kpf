@@ -12,11 +12,12 @@ KPF is a tool to assist in port redirects made through port-forward kubectl, kee
 
 - [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl/)
 - [jq](https://stedolan.github.io/jq/)
+- **gawk** (Linux distribution package)
 
 ### Install KPF
 
 ```sh
-$ curl -L https://github.com/supermock/kpf/releases/download/v1.3.0/kpf -o /usr/local/bin/kpf
+$ curl -L https://github.com/supermock/kpf/releases/download/v1.3.1/kpf -o /usr/local/bin/kpf
 $ chmod +x /usr/local/bin/kpf
 ```
 
@@ -58,7 +59,7 @@ $ kpf state restore my-forwards
 Update kpf to another version (Supported after 1.2.2)
 
 ```sh
-$ kpf update 1.3.0
+$ kpf update 1.3.1
 ```
 
 For more information, see the help...
