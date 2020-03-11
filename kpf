@@ -3,7 +3,7 @@
 # BEGIN UTILS
 
 timestamp() {
-	date +%s
+	echo -n $((`date +%s` * 1000))
 }
 
 export -f timestamp
@@ -56,7 +56,7 @@ export -f find_process_port
 # BEGIN LOGGER
 
 log() {
-	if [ $NOCOLOR -eq 0 ]; then
+	if [ $FLG_NOCOLOR -eq 0 ]; then
 		echo "$@" | sed \
 			-e "s/@red/$(tput setaf 1)/g" \
 			-e "s/@green/$(tput setaf 2)/g" \
@@ -200,7 +200,7 @@ kpf_list_output() {
 			print color("@b@white"h(cols)"@reset")
 
 			mlen = int(cols/6)
-			color_compensation = ENVIRON["NOCOLOR"] == 0 ? 9 : 0
+			color_compensation = ENVIRON["FLG_NOCOLOR"] == 0 ? 9 : 0
 
 			columns["s1"] = int(mlen/2) + color_compensation
 			columns["c1"] = color("@b@greenNamespace")
@@ -339,8 +339,8 @@ EOF
 
 	local ARGS=""
 
-	if [ "$ADDRESS" != "" ]; then
-		ARGS="--address=$ADDRESS"
+	if [ "$FLG_ADDRESS" != "" ]; then
+		ARGS="--address=$FLG_ADDRESS"
 	fi
 
 	(kubectl -n $NAMESPACE port-forward $ARGS $RESOURCE_NAME $LOCAL_PORT:$CLUSTER_PORT &> /dev/null &) &
@@ -364,7 +364,7 @@ EOF
 					mv "$TMPFILE" $KUBE_PORT_FORWARDRC
 				fi
 
-				local RESOURCE_NAME_COLUMN=$([ "$ADDRESS" = "" ] && echo "5" || echo "6")
+				local RESOURCE_NAME_COLUMN=$([ "$FLG_ADDRESS" = "" ] && echo "5" || echo "6")
 				RESOURCE_NAME=`ps -p $(echo $PORT_STATUS | cut -f1 -d' ') -o args --no-headers | cut -f$RESOURCE_NAME_COLUMN -d' '`
 				local TMPFILE=$(mktemp)
 				jq \
@@ -388,8 +388,8 @@ EOF
 
 			linf "kpf add success! $SELECTOR->$LOCAL_PORT"; return 0
 		fi
-		linf "Waiting for the forward to stay active. `expr $i + 1`/5 tries... Next try in 3s"
 		i=`expr $i + 1`
+		linf "Waiting for the forward to stay active. $i/5 tries... Next try in 3s"
 		sleep 3
 	done
 
@@ -636,7 +636,7 @@ kpf_state_list() {
 				print color("@b@white"savename), color(h(cols - length(savename) - 1)"@reset")
 
 				mlen = int(cols/5)
-				color_compensation = ENVIRON["NOCOLOR"] == 0 ? 9 : 0
+				color_compensation = ENVIRON["FLG_NOCOLOR"] == 0 ? 9 : 0
 
 				columns["s1"] = mlen + color_compensation
 				columns["c1"] = color("@b@greenNamespace")
@@ -676,7 +676,7 @@ export -f kpf_state_list
 
 # BEGIN CHECK DEPENDENCIES
 
-dependencies="kubectl jq gawk"
+dependencies="kubectl jq gawk fzf"
 
 for dep in $dependencies; do
   if ! is_installed $dep; then exit 1; fi
@@ -685,75 +685,19 @@ done
 # END CHECK DEPENDENCIES
 
 # BEGIN CLI ---------------------------------------------
+export SELF=$0
+export NAME=$(basename $SELF)
 export VERSION="v1.3.1"
 export KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
 
 # Options
-export ADDRESS=""
-export NOCOLOR=0
+export FLG_ADDRESS=""
+export FLG_NOCOLOR=0
 
-run_cmd() {
-  local CMD=$1
-  shift
-
-  if [ "$CMD" != "add" ]; then
-    if [ ! -f $KUBE_PORT_FORWARDRC ]; then
-      linf "First do port forwarding"; return 1
-    fi
-  fi
-
-  case "$CMD" in
-    add)
-			kpf_add $@
-    ;;
-		del)
-			kpf_del $@
-		;;
-		delall)
-			kpf_delall $@
-		;;
-		list)
-			kpf_list $@
-		;;
-		update)
-			kpf_update $@
-		;;
-		state)
-			local SUBCMD=$1
-
-			if [ "$SUBCMD" = "help" ] || [ "$SUBCMD" = "" ]; then
-				linf "kpf state [subcmd]"; return 1
-			fi
-
-			shift
-			case "$SUBCMD" in
-				save)
-					kpf_state_save $@
-				;;
-				restore)
-					kpf_state_restore $@
-				;;
-				remove)
-					kpf_state_remove $@
-				;;
-				list)
-					kpf_state_list $@
-				;;
-				*)
-					lwar "Command $SUBCMD not found"
-				;;
-			esac
-		;;
-    *)
-      lwar "Command $CMD not found"
-    ;;
-  esac
-}
-
-usage() {
+cli_usage() {
   awk -v pn="KUBE PORT FORWARD" -v cols=`tput cols` 'BEGIN{for(c=0;c<cols;c++) if(c == (cols/2 - (length(pn)+2)/2)) { printf " %s ", pn; cols=cols-length(pn)-1 } else { printf "=" }; printf ORS }'
   echo
-  echo "Usage: kpf [OPTIONS] COMMAND SUBCMD"
+  echo "Usage: $NAME [OPTIONS] COMMAND SUBCMD"
   echo
   echo "Options:"
   echo "  -h, --help               See this"
@@ -772,54 +716,138 @@ usage() {
 	echo "     ∟ remove        Removes the state that was saved from the port forward list"
 	echo "     ∟ list          List the state that was saved from the port forward list"
   echo
-  echo "Run 'kpf -h COMMAND SUBCMD' for more information on a command."
+  echo "Run '$NAME -h COMMAND SUBCMD' for more information on a command."
   echo
   awk -v cols=`tput cols` 'BEGIN{for(c=0;c<cols;c++) printf "="; printf ORS }'
   exit 0
 }
 
-if [ $# -eq 0 ]; then
-  usage
-fi
+cli_required() {
+  local flag=$1
+  local sample=$2
+  local value=$3
+
+  if [ -z "$value" ] || [[ "$value" == "-"* ]]; then
+    lwar "flag $flag require value. ex: $sample"
+    exit 1
+  fi
+}
+
+cli_cmd_not_found() {
+  local cmd=$1
+
+  lwar "command $cmd not found"
+}
+
+cli_run_subcmd_state() {
+  local cmd=$1
+  shift
+
+  case "$cmd" in
+    save)
+			kpf_state_save $@
+		;;
+		restore)
+			kpf_state_restore $@
+		;;
+		remove)
+			kpf_state_remove $@
+		;;
+		list)
+			kpf_state_list $@
+		;;
+    help | '')
+      echo "$NAME state [subcmd]"
+    ;;
+    *)
+      cli_cmd_not_found $cmd
+    ;;
+  esac
+}
+
+cli_run_cmd() {
+  local cmd=$1
+  shift
+
+	if [ "$CMD" != "add" ]; then
+    if [ ! -f $KUBE_PORT_FORWARDRC ]; then
+      linf "First do port forwarding"; return 1
+    fi
+  fi
+
+  case "$cmd" in
+		add)
+			kpf_add $@
+    ;;
+		del)
+			kpf_del $@
+		;;
+		delall)
+			kpf_delall $@
+		;;
+		list)
+			kpf_list $@
+		;;
+		update)
+			kpf_update $@
+		;;
+		state)
+			cli_run_subcmd_state $@
+		;;
+    *)
+      cli_cmd_not_found $cmd
+    ;;
+  esac
+}
+
+cli_main() {
+  local cmd=""
+
+  if [ $# -eq 0 ]; then
+		cli_usage
+	fi
+
+  while [ ! $# -eq 0 ]; do
+    case "$1" in
+      --version | -v)
+				linf $VERSION
+			;;
+      --help | -h)
+				if [ -z $2 ]; then
+					cli_usage
+				else
+					shift
+					run_cmd $@ help
+					break
+				fi
+			;;
+			--address | -a)
+				cli_required "$1" "addresses separated by comma" "$2"
+				FLG_ADDRESS=$2
+				shift
+			;;
+			--no-color)
+				FLG_NOCOLOR=1
+			;;
+      "-"*)
+        lwar "invalid option: $1"
+        exit 1
+      ;;
+      *)
+        cmd="$cmd $1"
+      ;;
+    esac
+    shift
+  done
+
+  cli_run_cmd $cmd
+}
+
+# END CLI  ----------------------------------------------
 
 if [ -f $KUBE_PORT_FORWARDRC ]; then
 	kpf_update_kube_port_forwardrc
 	kpf_check_update
 fi
 
-while [ ! $# -eq 0 ]
-do
-	case "$1" in
-    --version | -v)
-			linf $VERSION
-    ;;
-		--help | -h)
-      if [ -z $2 ]; then
-        usage
-      else
-				shift
-        run_cmd $@ help
-        break
-      fi
-    ;;
-		--address | -a)
-			ADDRESS=$2
-			shift
-		;;
-		--no-color)
-			NOCOLOR=1
-		;;
-    *)
-      if [[ "$1" == "-"* || "$1" == "--"* ]]; then
-        lerr "Invalid option: $1" >&2
-        exit 1
-      fi
-
-			run_cmd $@
-      break
-    ;;
-	esac
-	shift
-done
-
-# END CLI  ----------------------------------------------
+cli_main "$@"
