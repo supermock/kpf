@@ -821,6 +821,7 @@ cli_run_cmd() {
 
 cli_main() {
   local cmd=""
+	local is_help=0
 
   if [ $# -eq 0 ]; then
 		kpf_add_interactive
@@ -835,9 +836,7 @@ cli_main() {
 				if [ -z $2 ]; then
 					cli_usage
 				else
-					shift
-					run_cmd $@ help
-					break
+					is_help=1
 				fi
 			;;
 			--address | -a)
@@ -858,6 +857,10 @@ cli_main() {
     esac
     shift
   done
+
+	if [ $is_help -eq 1 ]; then
+		cmd="$cmd help"
+	fi
 
   cli_run_cmd $cmd
 }
