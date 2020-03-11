@@ -86,19 +86,19 @@ log() {
 export -f log
 
 linf() {
-	log "@b@cyan[KPF] @white$@@reset"
+	log "@cyan[KPF] @white$@@reset"
 }
 
 export -f linf
 
 lwar() {
-	log "@b@yellow[KPF] @white$@@reset"
+	log "@yellow[KPF] @white$@@reset"
 }
 
 export -f lwar
 
 lerr() {
-	log "@b@red[KPF] @white$@@reset" >&2
+	log "@red[KPF] @white$@@reset" >&2
 }
 
 export -f lerr
@@ -197,13 +197,13 @@ kpf_list_output() {
 			return text
 		}
 		BEGIN {
-			print color("@b@white"h(cols)"@reset")
+			print color("@white"h(cols)"@reset")
 
 			mlen = int(cols/6)
-			color_compensation = ENVIRON["FLG_NOCOLOR"] == 0 ? 9 : 0
+			color_compensation = ENVIRON["FLG_NOCOLOR"] == 0 ? 4 : 0
 
 			columns["s1"] = int(mlen/2) + color_compensation
-			columns["c1"] = color("@b@greenNamespace")
+			columns["c1"] = color("@greenNamespace")
 			columns["s2"] = int(mlen * 2)
 			columns["c2"] = "Selector"
 			columns["s3"] = int(mlen * 2)
@@ -216,10 +216,10 @@ kpf_list_output() {
 			columns["c6"] = color("Type@reset")
 
 			print table(columns)
-			print color("@b@white"h(cols)"@reset")
+			print color("@white"h(cols)"@reset")
 		} {
 			columns["s1"] = int(mlen/2) + color_compensation
-			columns["c1"] = color("@b@white"ellipsis(rm_quote($1), columns["s1"]))
+			columns["c1"] = color("@white"ellipsis(rm_quote($1), columns["s1"]))
 
 			columns["s2"] = int(mlen * 2)
 			columns["c2"] = ellipsis(rm_quote($2), columns["s2"])
@@ -276,11 +276,11 @@ EOF
 		linf "  - rs or replicaset"
 		linf "  - deploy or deployment"
 		linf "Samples:"
-		linf "  - kpf add [namespace] [pod-selector]    [port]"
-		linf "  - kpf add [namespace] [service-name]    [port] svc"
-		linf "  - kpf add [namespace] [replicaset-name] [port] rs"
-		linf "  - kpf add [namespace] [deployment-name] [port] deploy"
-		linf "kpf add [namespace] [selector] [port or local_port:cluster_port] [type?]"; return 1
+		linf "  - $NAME add [namespace] [pod-selector]    [port]"
+		linf "  - $NAME add [namespace] [service-name]    [port] svc"
+		linf "  - $NAME add [namespace] [replicaset-name] [port] rs"
+		linf "  - $NAME add [namespace] [deployment-name] [port] deploy"
+		linf "$NAME add [namespace] [selector] [port or local_port:cluster_port] [type?]"; return 1
 	fi
 
 	if [ "$LOCAL_PORT" -lt "1024" ] && [ "$EUID" -ne 0 ]; then
@@ -422,7 +422,7 @@ kpf_del() {
   local SELECTOR=$2
 
 	if [ "$1" = "help" ] || [ "$NAMESPACE" = "" ] || [ "$SELECTOR" = "" ]; then
-		linf "kpf del [namespace] [selector]"; return 1
+		linf "$NAME del [namespace] [selector]"; return 1
 	fi
 
   local FIND_EXP=".data["'$namespace'"][]? | select(.selector == "'$selector'")"
@@ -458,7 +458,7 @@ export -f kpf_del
 
 kpf_delall() {
 	if [ "$1" = "help" ]; then
-		linf "kpf delall"; return 1
+		linf "$NAME delall"; return 1
 	fi
 
 	jq -r \
@@ -472,7 +472,7 @@ kpf_list() {
   local NAMESPACE=$1
 
 	if [ "$1" = "help" ]; then
-		linf "kpf list [namespace?]"; return 1
+		linf "$NAME list [namespace?]"; return 1
 	fi
 
 	if [ `jq '.data | length' $KUBE_PORT_FORWARDRC` -eq 0 ]; then
@@ -505,7 +505,7 @@ kpf_update() {
 	local OUTPUT_PATH=/tmp/kpf
 
 	if [ "$1" = "help" ] || [ "$NEW_VERSION" = "v" ]; then
-		linf "kpf update [version]"; return 1
+		linf "$NAME update [version]"; return 1
 	fi
 
 	if [ "$(curl -Lo /dev/null -s -w "%{http_code}\n" $URL)" = "404" ]; then 
@@ -538,7 +538,7 @@ kpf_state_save() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
-		linf "kpf state save [save_name]"; return 1
+		linf "$NAME state save [save_name]"; return 1
 	fi
 
 	if [ `jq '.data | length' $KUBE_PORT_FORWARDRC` -eq 0 ]; then
@@ -558,7 +558,7 @@ kpf_state_restore() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
-		linf "kpf state restore [save_name]"; return 1
+		linf "$NAME state restore [save_name]"; return 1
 	fi
 
 	local ENTRY=`jq --arg save_name $SAVE_NAME '.save[$save_name]' $KUBE_PORT_FORWARDRC`
@@ -581,7 +581,7 @@ kpf_state_remove() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ] || [ "$SAVE_NAME" = "" ]; then
-		linf "kpf state remove [save_name]"; return 1
+		linf "$NAME state remove [save_name]"; return 1
 	fi
 
 	local ENTRY=`jq --arg save_name $SAVE_NAME '.save[$save_name]' $KUBE_PORT_FORWARDRC`
@@ -602,7 +602,7 @@ kpf_state_list() {
 	local SAVE_NAME=$1
 
 	if [ "$1" = "help" ]; then
-		linf "kpf state list [save_name?]"; return 1
+		linf "$NAME state list [save_name?]"; return 1
 	fi
 
 	if [ -z $SAVE_NAME ]; then
@@ -652,13 +652,13 @@ kpf_state_list() {
 				return text
 			}
 			BEGIN {
-				print color("@b@white"savename), color(h(cols - length(savename) - 1)"@reset")
+				print color("@white"savename), color(h(cols - length(savename) - 1)"@reset")
 
 				mlen = int(cols/5)
-				color_compensation = ENVIRON["FLG_NOCOLOR"] == 0 ? 9 : 0
+				color_compensation = ENVIRON["FLG_NOCOLOR"] == 0 ? 4 : 0
 
 				columns["s1"] = mlen + color_compensation
-				columns["c1"] = color("@b@greenNamespace")
+				columns["c1"] = color("@greenNamespace")
 				columns["s2"] = int(mlen + mlen/2)
 				columns["c2"] = "Selector"
 				columns["s3"] = mlen
@@ -669,10 +669,10 @@ kpf_state_list() {
 				columns["c5"] = color("Type@reset")
 
 				print table(columns)
-				print color("@b@white"h(cols)"@reset")
+				print color("@white"h(cols)"@reset")
 			} {
 				columns["s1"] = mlen + color_compensation
-				columns["c1"] = color("@b@white"ellipsis(rm_quote($1), columns["s1"]))
+				columns["c1"] = color("@white"ellipsis(rm_quote($1), columns["s1"]))
 				columns["s2"] = int(mlen + mlen/2)
 				columns["c2"] = ellipsis(rm_quote($2), columns["s2"])
 				columns["s3"] = mlen
@@ -776,7 +776,7 @@ cli_run_subcmd_state() {
 			kpf_state_list $@
 		;;
     help | '')
-      echo "$NAME state [subcmd]"
+      linf "$NAME state [subcmd]"
     ;;
     *)
       cli_cmd_not_found $cmd
