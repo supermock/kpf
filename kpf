@@ -398,6 +398,25 @@ EOF
 
 export -f kpf_add
 
+kpf_add_interactive() {
+	local namespace=$(kubectl get namespaces --no-headers -o=custom-columns=NAME:.metadata.name | fzf --no-mouse --no-preview --prompt="namespace > ")
+	if [[ -z $namespace ]]; then exit 0; fi
+	local deployment=$(kubectl -n $namespace get deployments --no-headers -o=custom-columns=NAME:.metadata.name | fzf --no-mouse --no-preview --prompt="deployment > ")
+	if [[ -z $deployment ]]; then exit 0; fi
+	local selector=$(kubectl -n $namespace get deployment $deployment -o go-template --template='{{range $key, $value := .spec.selector.matchLabels}}{{$key}}{{"="}}{{$value}},{{end}}' | sed 's/.$//')
+	if [[ -z $selector ]]; then exit 0; fi
+	local remote_port=$(kubectl -n $namespace get pod -l $selector -o jsonpath="{.items[0]..ports..containerPort}" | tr " " "\n" | fzf --no-mouse --no-preview --prompt="remote port > ")
+	if [[ -z $remote_port ]]; then exit 0; fi
+	local local_port=$(seq 1024 65535 | fzf --no-mouse --no-preview --prompt="local port > ")
+	if [[ -z $local_port ]]; then exit 0; fi
+
+	$SELF add $namespace $selector ${local_port:-$remote_port}:$remote_port
+
+	exit $?
+}
+
+export -f kpf_add_interactive
+
 kpf_del() {
   local NAMESPACE=$1
   local SELECTOR=$2
@@ -804,7 +823,7 @@ cli_main() {
   local cmd=""
 
   if [ $# -eq 0 ]; then
-		cli_usage
+		kpf_add_interactive
 	fi
 
   while [ ! $# -eq 0 ]; do
