@@ -119,6 +119,12 @@ kpf_update_kube_port_forwardrc() {
       jq '. + {"update": { "has": false, "next_has": 0, "warn": true, "next_warn": 0 }}' $KUBE_PORT_FORWARDRC > $TMPFILE
       mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
    fi
+
+	 if [[ $(jq 'has("version")' $KUBE_PORT_FORWARDRC) == "false" ]]; then
+      local TMPFILE=$(mktemp)
+      jq --arg version $VERSION '. + { "version": $version }' $KUBE_PORT_FORWARDRC > $TMPFILE
+      mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
+   fi
 }
 
 export -f kpf_update_kube_port_forwardrc
@@ -150,6 +156,17 @@ kpf_check_update() {
    fi
 
    if [[ $(jq -r '.update.has' $KUBE_PORT_FORWARDRC) == "true" ]]; then
+	 	local current_version=$(echo $VERSION | number_only)
+		local saved_version=$(jq -r '.version' $KUBE_PORT_FORWARDRC | number_only)
+
+		# check if the current script version is gt saved file version, to ignore external update
+	 	if [[ $current_version -gt $saved_version ]]; then
+		 	local TMPFILE=$(mktemp)
+			jq --arg version $VERSION '.version = $version | .update.has = false' $KUBE_PORT_FORWARDRC > $TMPFILE
+			mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
+
+			return 0
+		fi
       if [[ $(jq -r '.update.warn' $KUBE_PORT_FORWARDRC) == "true" ]]; then
          if [ $(timestamp) -gt $(jq -r '.update.next_warn' $KUBE_PORT_FORWARDRC) ]; then
             local REMOTE_VERSION=$(kpf_remote_version)
@@ -539,7 +556,7 @@ kpf_update() {
 
 	linf "Updating config with new version..."
 	local TMPFILE=$(mktemp)
-	jq '.update.has = false' $KUBE_PORT_FORWARDRC > $TMPFILE
+	jq --arg version $NEW_VERSION '.version = $version | .update.has = false' $KUBE_PORT_FORWARDRC > $TMPFILE
 	mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
 
 	linf "kpf update success!"
