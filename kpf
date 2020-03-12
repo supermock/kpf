@@ -736,7 +736,7 @@ done
 # BEGIN CLI ---------------------------------------------
 export SELF=$0
 export NAME=$(basename $SELF)
-export VERSION="v1.3.1"
+export VERSION="v1.4.0"
 export KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
 
 # Options
