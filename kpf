@@ -861,6 +861,7 @@ cli_main() {
     case "$1" in
       --version | -v)
 				linf $VERSION
+				exit 0
 			;;
       --help | -h)
 				if [ -z $2 ]; then
