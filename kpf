@@ -149,7 +149,7 @@ kpf_check_update() {
             mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
          else
             local TMPFILE=$(mktemp)
-            jq --arg next_has $(($(timestamp) + 10800)) '.update.next_has = $next_has' $KUBE_PORT_FORWARDRC > $TMPFILE
+            jq --arg next_has $(($(timestamp) + 10800000)) '.update.next_has = $next_has' $KUBE_PORT_FORWARDRC > $TMPFILE
             mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
          fi
       fi
@@ -173,7 +173,7 @@ kpf_check_update() {
             linf "New version available... Use: @yellowkpf update ${REMOTE_VERSION:1}"
 
             local TMPFILE=$(mktemp)
-            jq --arg next_warn $(($(timestamp) + 432000)) '.update.next_warn = $next_warn' $KUBE_PORT_FORWARDRC > $TMPFILE
+            jq --arg next_warn $(($(timestamp) + 432000000)) '.update.next_warn = $next_warn' $KUBE_PORT_FORWARDRC > $TMPFILE
             mv "$TMPFILE" "$KUBE_PORT_FORWARDRC"
          fi
       fi
