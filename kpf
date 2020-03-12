@@ -399,15 +399,28 @@ EOF
 export -f kpf_add
 
 kpf_add_interactive() {
-	local namespace=$(kubectl get namespaces --no-headers -o=custom-columns=NAME:.metadata.name | fzf --no-mouse --no-preview --prompt="namespace > ")
+	if ! is_installed "fzf"; then
+		lwar "please install the 'fzf' dependency to use interactive mode"; exit 0
+	fi
+
+	export FZF_DEFAULT_OPTS="--no-mouse --no-preview --height=35%"
+
+	local namespace=$(kubectl get namespaces --no-headers -o=custom-columns=NAME:.metadata.name | fzf --prompt="namespace > ")
 	if [[ -z $namespace ]]; then exit 0; fi
-	local deployment=$(kubectl -n $namespace get deployments --no-headers -o=custom-columns=NAME:.metadata.name | fzf --no-mouse --no-preview --prompt="deployment > ")
+	
+	local deployment=$(kubectl -n $namespace get deployments --no-headers -o=custom-columns=NAME:.metadata.name | fzf --prompt="deployment > ")
 	if [[ -z $deployment ]]; then exit 0; fi
-	local selector=$(kubectl -n $namespace get deployment $deployment -o go-template --template='{{range $key, $value := .spec.selector.matchLabels}}{{$key}}{{"="}}{{$value}},{{end}}' | sed 's/.$//')
+
+	local deployment_info=$(kubectl -n $namespace get deployment $deployment -o json)
+	if [[ -z $deployment_info ]]; then exit 0; fi
+
+	local selector=$(jq -r '.spec.selector.matchLabels | [to_entries[] | "\(.key)=\(.value)"] | join(",")' <<< $deployment_info)
 	if [[ -z $selector ]]; then exit 0; fi
-	local remote_port=$(kubectl -n $namespace get pod -l $selector -o jsonpath="{.items[0]..ports..containerPort}" | tr " " "\n" | fzf --no-mouse --no-preview --prompt="remote port > ")
+
+	local remote_port=$(jq -r '.spec.template.spec.containers[]?.ports[]?.containerPort' <<< $deployment_info | fzf --prompt="remote port > ")
 	if [[ -z $remote_port ]]; then exit 0; fi
-	local local_port=$(seq 1024 65535 | fzf --no-mouse --no-preview --prompt="local port > ")
+
+	local local_port=$(seq 1024 65535 | fzf --prompt="local port > ")
 	if [[ -z $local_port ]]; then exit 0; fi
 
 	$SELF add $namespace $selector ${local_port:-$remote_port}:$remote_port
@@ -695,7 +708,7 @@ export -f kpf_state_list
 
 # BEGIN CHECK DEPENDENCIES
 
-dependencies="kubectl jq gawk fzf"
+dependencies="kubectl jq gawk"
 
 for dep in $dependencies; do
   if ! is_installed $dep; then exit 1; fi
