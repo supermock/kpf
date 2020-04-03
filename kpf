@@ -16,7 +16,6 @@ export -f number_only
 
 is_installed() {
 	if ! [ -x "$(command -v $1)" ]; then
-		echo "Error: $1 is not installed." >&2
 		return 1
 	fi
 }
@@ -728,7 +727,10 @@ export -f kpf_state_list
 dependencies="kubectl jq gawk"
 
 for dep in $dependencies; do
-  if ! is_installed $dep; then exit 1; fi
+  if ! is_installed $dep; then
+    echo "Error: $dep is not installed." >&2
+    exit 1
+  fi
 done
 
 # END CHECK DEPENDENCIES
