@@ -187,7 +187,7 @@ kpf_list_output() {
 			return gensub(/ /, "=", "g", sprintf("%-*s", size, ""))
 		}
 		function table(columns) {
-			return sprintf("%-*s%-*s%-*s%-*s%-*s%-*s", 
+			return sprintf("%-*s%-*s%-*s%-*s%-*s%-*s",
 					columns["s1"], columns["c1"],
 					columns["s2"], columns["c2"],
 					columns["s3"], columns["c3"],
@@ -209,7 +209,7 @@ kpf_list_output() {
 			if (length(text) > maxsize) {
 					return substr(text, 1, maxsize-4)"... "
 			}
-			
+
 			return text
 		}
 		BEGIN {
@@ -251,7 +251,7 @@ kpf_list_output() {
 
 			columns["s6"] = int(mlen/2)
 			columns["c6"] = color(ellipsis(rm_quote($6), columns["s6"])"@reset")
-			
+
 			print table(columns)
 		}
 	EOF
@@ -423,23 +423,23 @@ kpf_add_interactive() {
 
 	local namespace=$(kubectl get namespaces --no-headers -o=custom-columns=NAME:.metadata.name | fzf --prompt="namespace > ")
 	if [[ -z $namespace ]]; then exit 0; fi
-	
-	local deployment=$(kubectl -n $namespace get deployments --no-headers -o=custom-columns=NAME:.metadata.name | fzf --prompt="deployment > ")
-	if [[ -z $deployment ]]; then exit 0; fi
 
-	local deployment_info=$(kubectl -n $namespace get deployment $deployment -o json)
-	if [[ -z $deployment_info ]]; then exit 0; fi
+	local resource=$(kubectl -n $namespace get deployments,statefulsets -o=jsonpath='{range .items[*]}{.kind}{"/"}{.metadata.name}{"\n"}{end}' | fzf --prompt="resource > ")
+	if [[ -z $resource ]]; then exit 0; fi
 
-	local selector=$(jq -r '.spec.selector.matchLabels | [to_entries[] | "\(.key)=\(.value)"] | join(",")' <<< $deployment_info)
+	local resource_info=$(kubectl -n $namespace get $resource -o json)
+	if [[ -z $resource_info ]]; then exit 0; fi
+
+	local selector=$(jq -r '.spec.selector.matchLabels | [to_entries[] | "\(.key)=\(.value)"] | join(",")' <<< $resource_info)
 	if [[ -z $selector ]]; then exit 0; fi
 
-	local remote_port=$(jq -r '.spec.template.spec.containers[]?.ports[]?.containerPort' <<< $deployment_info | fzf --prompt="remote port > ")
+	local remote_port=$(jq -r '.spec.template.spec.containers[]?.ports[]?.containerPort' <<< $resource_info | fzf --prompt="remote port > ")
 	if [[ -z $remote_port ]]; then exit 0; fi
 
 	local local_port=$(seq 1024 65535 | fzf --prompt="local port > ")
 	if [[ -z $local_port ]]; then exit 0; fi
 
-	$SELF add $namespace $selector ${local_port:-$remote_port}:$remote_port
+	kpf_add $namespace $selector $local_port:$remote_port
 
 	exit $?
 }
@@ -656,7 +656,7 @@ kpf_state_list() {
 				return gensub(/ /, "=", "g", sprintf("%-*s", size, ""))
 			}
 			function table(columns) {
-				return sprintf("%-*s%-*s%-*s%-*s%-*s", 
+				return sprintf("%-*s%-*s%-*s%-*s%-*s",
 						columns["s1"], columns["c1"],
 						columns["s2"], columns["c2"],
 						columns["s3"], columns["c3"],
@@ -677,7 +677,7 @@ kpf_state_list() {
 				if (length(text) > maxsize) {
 						return substr(text, 1, maxsize-4)"... "
 				}
-				
+
 				return text
 			}
 			BEGIN {
@@ -710,7 +710,7 @@ kpf_state_list() {
 				columns["c4"] = ellipsis(rm_quote($4), columns["s4"])
 				columns["s5"] = int(mlen/2)
 				columns["c5"] = color(ellipsis(rm_quote($5), columns["s5"])"@reset")
-				
+
 				print table(columns)
 			}
 		EOF
@@ -736,8 +736,7 @@ done
 # END CHECK DEPENDENCIES
 
 # BEGIN CLI ---------------------------------------------
-export SELF=$0
-export NAME=$(basename $SELF)
+export NAME=$(basename $0)
 export VERSION="v1.4.0"
 export KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
 
