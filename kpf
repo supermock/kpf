@@ -187,13 +187,14 @@ kpf_list_output() {
 			return gensub(/ /, "=", "g", sprintf("%-*s", size, ""))
 		}
 		function table(columns) {
-			return sprintf("%-*s%-*s%-*s%-*s%-*s%-*s",
+			return sprintf("%-*s%-*s%-*s%-*s%-*s%-*s%-*s",
 					columns["s1"], columns["c1"],
 					columns["s2"], columns["c2"],
 					columns["s3"], columns["c3"],
 					columns["s4"], columns["c4"],
 					columns["s5"], columns["c5"],
-					columns["s6"], columns["c6"])
+					columns["s6"], columns["c6"],
+          columns["s7"], columns["c7"])
 		}
 		function rm_quote(text) {
 			return gensub(/"/, "", "g", text)
@@ -206,51 +207,50 @@ kpf_list_output() {
 			return out
 		}
 		function ellipsis(text, maxsize) {
-			if (length(text) > maxsize) {
+			if (length(text) > (maxsize-1)) {
 					return substr(text, 1, maxsize-4)"... "
 			}
 
 			return text
 		}
+    function size(percentage) {
+      return int((percentage / 100) * cols)
+    }
 		BEGIN {
 			print color("@white"h(cols)"@reset")
 
-			mlen = int(cols/6)
-			color_compensation = ENVIRON["FLG_NOCOLOR"] == 0 ? 4 : 0
-
-			columns["s1"] = int(mlen/2) + color_compensation
-			columns["c1"] = color("@greenNamespace")
-			columns["s2"] = int(mlen * 2)
-			columns["c2"] = "Selector"
-			columns["s3"] = int(mlen * 2)
-			columns["c3"] = "Resource Name"
-			columns["s4"] = int(mlen/2)
-			columns["c4"] = "Local Port"
-			columns["s5"] = int(mlen/2)
-			columns["c5"] = "Cluster Port"
-			columns["s6"] = int(mlen/2)
-			columns["c6"] = color("Type@reset")
+			columns["s1"] = size(15)
+			columns["c1"] = color("@greenContext")
+			columns["s2"] = size(10)
+			columns["c2"] = "Namespace"
+      columns["s3"] = size(25)
+			columns["c3"] = "Selector"
+			columns["s4"] = size(25)
+			columns["c4"] = "Resource Name"
+			columns["s5"] = size(10)
+			columns["c5"] = "Local Port"
+			columns["s6"] = size(10)
+			columns["c6"] = "Cluster Port"
+			columns["s7"] = size(5)
+			columns["c7"] = color("Type@reset")
 
 			print table(columns)
 			print color("@white"h(cols)"@reset")
 		} {
-			columns["s1"] = int(mlen/2) + color_compensation
+			columns["s1"] = size(15)
 			columns["c1"] = color("@white"ellipsis(rm_quote($1), columns["s1"]))
-
-			columns["s2"] = int(mlen * 2)
+			columns["s2"] = size(10)
 			columns["c2"] = ellipsis(rm_quote($2), columns["s2"])
-
-			columns["s3"] = int(mlen * 2)
+			columns["s3"] = size(25)
 			columns["c3"] = ellipsis(rm_quote($3), columns["s3"])
-
-			columns["s4"] = int(mlen/2)
+			columns["s4"] = size(25)
 			columns["c4"] = ellipsis(rm_quote($4), columns["s4"])
-
-			columns["s5"] = int(mlen/2)
+			columns["s5"] = size(10)
 			columns["c5"] = ellipsis(rm_quote($5), columns["s5"])
-
-			columns["s6"] = int(mlen/2)
-			columns["c6"] = color(ellipsis(rm_quote($6), columns["s6"])"@reset")
+      columns["s6"] = size(10)
+			columns["c6"] = ellipsis(rm_quote($6), columns["s6"])
+			columns["s7"] = size(5)
+			columns["c7"] = color(ellipsis(rm_quote($7), columns["s7"])"@reset")
 
 			print table(columns)
 		}
@@ -302,6 +302,8 @@ EOF
 	if [ "$LOCAL_PORT" -lt "1024" ] && [ "$EUID" -ne 0 ]; then
 		lwar "You can not run on a local port below 1024 without being root"; return 1
 	fi
+
+  local CONTEXT=$(kubectl config current-context)
 
 	local RESOURCE_NAME=""
 	case $TYPE in
@@ -384,21 +386,23 @@ EOF
 				RESOURCE_NAME=`ps -p $(echo $PORT_STATUS | cut -f1 -d' ') -o args --no-headers | cut -f$RESOURCE_NAME_COLUMN -d' '`
 				local TMPFILE=$(mktemp)
 				jq \
+        --arg context "$CONTEXT" \
 				--arg namespace "$NAMESPACE" \
 				--arg selector "$SELECTOR" \
 				--arg resource_name "$RESOURCE_NAME" \
 				--arg local_port $LOCAL_PORT \
 				--arg cluster_port $CLUSTER_PORT \
 				--arg type $TYPE \
-				'.data[$namespace] += [{ "namespace": $namespace, "selector": $selector, "resource_name": $resource_name, "local_port": $local_port, "cluster_port": $cluster_port, "type": $type }]' $KUBE_PORT_FORWARDRC > $TMPFILE
+				'.data[$namespace] += [{ "context": $context, "namespace": $namespace, "selector": $selector, "resource_name": $resource_name, "local_port": $local_port, "cluster_port": $cluster_port, "type": $type }]' $KUBE_PORT_FORWARDRC > $TMPFILE
 				mv "$TMPFILE" $KUBE_PORT_FORWARDRC
 			else
 				local TMPFILE=$(mktemp)
 				jq \
+        --arg context "$CONTEXT" \
 				--arg namespace "$NAMESPACE" \
 				--arg selector "$SELECTOR" \
 				--arg resource_name "$RESOURCE_NAME" \
-				'(.data[$namespace][] | select(.selector == $selector) | .resource_name) |= $resource_name' $KUBE_PORT_FORWARDRC > $TMPFILE
+				'(.data[$namespace][] | select(.selector == $selector)) |= . + { "context": $context, "resource_name": $resource_name }' $KUBE_PORT_FORWARDRC > $TMPFILE
 				mv "$TMPFILE" $KUBE_PORT_FORWARDRC
 			fi
 
@@ -510,7 +514,7 @@ kpf_list() {
 
   if [ -z $NAMESPACE ]; then
     jq -r \
-    '.data | keys[] as $k | .[$k][]? | [.namespace, .selector, .resource_name, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
+    '.data | keys[] as $k | .[$k][]? | [.context, .namespace, .selector, .resource_name, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
     kpf_list_output
   else
 		if [ `jq --arg namespace $NAMESPACE '.data[$namespace] | length' $KUBE_PORT_FORWARDRC` -eq 0 ]; then
@@ -519,7 +523,7 @@ kpf_list() {
 
     jq -r \
 		--arg namespace "$NAMESPACE" \
-		'.data[$namespace][]? | [.namespace, .selector, .resource_name, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
+		'.data[$namespace][]? | [.context, .namespace, .selector, .resource_name, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
 		kpf_list_output
   fi
 }
@@ -598,10 +602,9 @@ kpf_state_restore() {
 	jq -r \
 	--arg save_name "$SAVE_NAME" \
     '.save[$save_name] | keys[] as $k | .[$k][]? | [.namespace, .selector, .local_port, .cluster_port, .type] | @tsv' $KUBE_PORT_FORWARDRC | \
-		xargs printf "%s %s %s:%s %s\n" | \
-		xargs -I{} bash -c "kpf_add {}"
+		xargs printf "kpf_add %s %s %s:%s %s\n" | bash
 
-		linf "kpf state restore success!"
+  linf "kpf state restore success!"
 }
 
 export -f kpf_state_restore
@@ -674,41 +677,41 @@ kpf_state_list() {
 				return out
 			}
 			function ellipsis(text, maxsize) {
-				if (length(text) > maxsize) {
-						return substr(text, 1, maxsize-4)"... "
-				}
+        if (length(text) > (maxsize-1)) {
+            return substr(text, 1, maxsize-4)"... "
+        }
 
-				return text
-			}
+        return text
+      }
+      function size(percentage) {
+        return int((percentage / 100) * cols)
+      }
 			BEGIN {
 				print color("@white"savename), color(h(cols - length(savename) - 1)"@reset")
 
-				mlen = int(cols/5)
-				color_compensation = ENVIRON["FLG_NOCOLOR"] == 0 ? 4 : 0
-
-				columns["s1"] = mlen + color_compensation
+				columns["s1"] = size(15)
 				columns["c1"] = color("@greenNamespace")
-				columns["s2"] = int(mlen + mlen/2)
+				columns["s2"] = size(45)
 				columns["c2"] = "Selector"
-				columns["s3"] = mlen
+				columns["s3"] = size(15)
 				columns["c3"] = "Local Port"
-				columns["s4"] = mlen
+				columns["s4"] = size(15)
 				columns["c4"] = "Cluster Port"
-				columns["s5"] = int(mlen/2)
+				columns["s5"] = size(10)
 				columns["c5"] = color("Type@reset")
 
 				print table(columns)
 				print color("@white"h(cols)"@reset")
 			} {
-				columns["s1"] = mlen + color_compensation
+				columns["s1"] = size(15)
 				columns["c1"] = color("@white"ellipsis(rm_quote($1), columns["s1"]))
-				columns["s2"] = int(mlen + mlen/2)
+				columns["s2"] = size(45)
 				columns["c2"] = ellipsis(rm_quote($2), columns["s2"])
-				columns["s3"] = mlen
+				columns["s3"] = size(15)
 				columns["c3"] = ellipsis(rm_quote($3), columns["s3"])
-				columns["s4"] = mlen
+				columns["s4"] = size(15)
 				columns["c4"] = ellipsis(rm_quote($4), columns["s4"])
-				columns["s5"] = int(mlen/2)
+				columns["s5"] = size(10)
 				columns["c5"] = color(ellipsis(rm_quote($5), columns["s5"])"@reset")
 
 				print table(columns)
