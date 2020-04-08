@@ -170,6 +170,7 @@ kpf_check_update() {
          if [ $(timestamp) -gt $(jq -r '.update.next_warn' $KUBE_PORT_FORWARDRC) ]; then
             local REMOTE_VERSION=$(kpf_remote_version)
             linf "New version available... Use: @yellowkpf update ${REMOTE_VERSION:1}"
+            linf "See release notes: https://github.com/supermock/kpf/releases/tag/$REMOTE_VERSION"
 
             local TMPFILE=$(mktemp)
             jq --arg next_warn $(($(timestamp) + 432000000)) '.update.next_warn = $next_warn' $KUBE_PORT_FORWARDRC > $TMPFILE
@@ -740,7 +741,7 @@ done
 
 # BEGIN CLI ---------------------------------------------
 export NAME=$(basename $0)
-export VERSION="v1.4.0"
+export VERSION="v1.4.2"
 export KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwardrc"}
 
 # Options
