@@ -267,6 +267,10 @@ export -f kpf_list_output
 
 kpf_add() {
 	if [ ! -f $KUBE_PORT_FORWARDRC ]; then
+    local DIR=$(dirname $KUBE_PORT_FORWARDRC)
+
+    [ "$DIR" != "." ] && mkdir -p $DIR
+
 	  tee $KUBE_PORT_FORWARDRC &>/dev/null <<EOF
 {
 	"data": {},
@@ -276,7 +280,8 @@ kpf_add() {
 		"next_has": 0,
 		"warn": true,
 		"next_warn": 0
-	}
+	},
+  "version": "$VERSION"
 }
 EOF
 	fi
