@@ -201,7 +201,7 @@ kpf_list_output() {
 			return gensub(/"/, "", "g", text)
 		}
 		function color(text) {
-			cmd = "log "text
+			cmd = "eval 'log"ENVIRON["BASH_FUNC_log%%"]"'; log "text
 			cmd | getline out
 			close(cmd)
 
@@ -547,7 +547,7 @@ kpf_update() {
 		linf "$NAME update [version]"; return 1
 	fi
 
-	if [ "$(curl -Lo /dev/null -s -w "%{http_code}\n" $URL)" = "404" ]; then 
+	if [ "$(curl -Lo /dev/null -s -w "%{http_code}\n" $URL)" = "404" ]; then
 		lerr "Failed on update! Version $NEW_VERSION not found. See more: https://github.com/supermock/kpf/releases"; return 1
 	fi
 
@@ -676,7 +676,7 @@ kpf_state_list() {
 				return gensub(/"/, "", "g", text)
 			}
 			function color(text) {
-				cmd = "log "text
+				cmd = "eval 'log"ENVIRON["BASH_FUNC_log%%"]"'; log "text
 				cmd | getline out
 				close(cmd)
 
