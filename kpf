@@ -830,7 +830,7 @@ cli_run_cmd() {
   local cmd=$1
   shift
 
-	if [ "$cmd" != "add" ]; then
+	if [ "$cmd" != "" ] && [ "$cmd" != "add" ]; then
     if [ ! -f $KUBE_PORT_FORWARDRC ]; then
       linf "First do port forwarding"; return 1
     fi
