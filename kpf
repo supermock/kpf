@@ -754,7 +754,6 @@ export FLG_CONTEXT="$(kubectl config current-context)"
 export FLG_NOCOLOR=0
 
 cli_usage() {
-  awk -v pn="KUBE PORT FORWARD" -v cols=`tput cols` 'BEGIN{for(c=0;c<cols;c++) if(c == (cols/2 - (length(pn)+2)/2)) { printf " %s ", pn; cols=cols-length(pn)-1 } else { printf "=" }; printf ORS }'
   echo
   echo "Usage: $NAME [OPTIONS] COMMAND SUBCMD"
   echo
@@ -779,7 +778,6 @@ cli_usage() {
   echo
   echo "Run '$NAME -h COMMAND SUBCMD' for more information on a command."
   echo
-  awk -v cols=`tput cols` 'BEGIN{for(c=0;c<cols;c++) printf "="; printf ORS }'
   exit 0
 }
 
