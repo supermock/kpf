@@ -763,6 +763,7 @@ cli_usage() {
   echo "  -v, --version            Print version information and quit"
   echo "  -a, --address            Addresses to listen on comma separated (Only for add/interactive command)"
   echo "  -c, --context            Kubeconfig context name (Only for add/interactive command)"
+  echo "      --no-color           Disable colors on stdout"
   echo
   echo "Commands:"
   echo "  add           Adds a new port forwarding"
