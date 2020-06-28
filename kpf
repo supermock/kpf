@@ -309,12 +309,10 @@ EOF
 		lwar "You can not run on a local port below 1024 without being root"; return 1
 	fi
 
-  local CONTEXT=$(kubectl config current-context)
-
 	local RESOURCE_NAME=""
 	case $TYPE in
 		deploy|deployment)
-			RESOURCE_NAME=$(kubectl -n $NAMESPACE get deployments $SELECTOR 2> /dev/null)
+			RESOURCE_NAME=$(kubectl --context $FLG_CONTEXT -n $NAMESPACE get deployments $SELECTOR 2> /dev/null)
 			if [ "$RESOURCE_NAME" = "" ]; then
 				lwar "$SELECTOR selector not found on deployments"; return 1
 			fi
@@ -322,7 +320,7 @@ EOF
 			TYPE="deployment"
 		;;
 		rs|replicaset)
-			RESOURCE_NAME=$(kubectl -n $NAMESPACE get rs $SELECTOR 2> /dev/null)
+			RESOURCE_NAME=$(kubectl --context $FLG_CONTEXT -n $NAMESPACE get rs $SELECTOR 2> /dev/null)
 			if [ "$RESOURCE_NAME" = "" ]; then
 				lwar "$SELECTOR selector not found on replicasets"; return 1
 			fi
@@ -330,7 +328,7 @@ EOF
 			TYPE="replicaset"
 		;;
 		svc|service)
-			RESOURCE_NAME=$(kubectl -n $NAMESPACE get svc $SELECTOR 2> /dev/null)
+			RESOURCE_NAME=$(kubectl --context $FLG_CONTEXT -n $NAMESPACE get svc $SELECTOR 2> /dev/null)
 			if [ "$RESOURCE_NAME" = "" ]; then
 				lwar "$SELECTOR selector not found on services"; return 1
 			fi
@@ -338,7 +336,7 @@ EOF
 			TYPE="service"
 		;;
 		*) #pods
-			RESOURCE_NAME=$(kubectl -n $NAMESPACE get pod -l $SELECTOR -o jsonpath='{.items[0].metadata.name}' 2> /dev/null)
+			RESOURCE_NAME=$(kubectl --context $FLG_CONTEXT -n $NAMESPACE get pod -l $SELECTOR -o jsonpath='{.items[0].metadata.name}' 2> /dev/null)
 			TYPE="pod"
 			if [ "$RESOURCE_NAME" = "" ]; then
 				lwar "$SELECTOR selector not found on pods"; return 1
@@ -361,13 +359,13 @@ EOF
 		lwar "The `echo $PORT_STATUS | cut -f2 -d' '` process is already using this port"; return 1
 	fi
 
-	local ARGS=""
+	local ARGS=()
 
-	if [ "$FLG_ADDRESS" != "" ]; then
-		ARGS="--address=$FLG_ADDRESS"
+	if [ -n "$FLG_ADDRESS" ]; then
+		ARGS+=("--address=$FLG_ADDRESS")
 	fi
 
-	(kubectl -n $NAMESPACE port-forward $ARGS $RESOURCE_NAME $LOCAL_PORT:$CLUSTER_PORT &> /dev/null &) &
+	(kubectl --context $FLG_CONTEXT -n $NAMESPACE port-forward ${ARGS[@]} $RESOURCE_NAME $LOCAL_PORT:$CLUSTER_PORT &> /dev/null &) &
 	local return_code=$?
 	if [ $return_code -ne 0 ]; then
 		lerr "Failed to start port forwarding. Exit status: $return_code"; return $return_code
@@ -388,11 +386,9 @@ EOF
 					mv "$TMPFILE" $KUBE_PORT_FORWARDRC
 				fi
 
-				local RESOURCE_NAME_COLUMN=$([ "$FLG_ADDRESS" = "" ] && echo "5" || echo "6")
-				RESOURCE_NAME=`ps -p $(echo $PORT_STATUS | cut -f1 -d' ') -o args --no-headers | cut -f$RESOURCE_NAME_COLUMN -d' '`
 				local TMPFILE=$(mktemp)
 				jq \
-        --arg context "$CONTEXT" \
+        --arg context "$FLG_CONTEXT" \
 				--arg namespace "$NAMESPACE" \
 				--arg selector "$SELECTOR" \
 				--arg resource_name "$RESOURCE_NAME" \
@@ -404,7 +400,7 @@ EOF
 			else
 				local TMPFILE=$(mktemp)
 				jq \
-        --arg context "$CONTEXT" \
+        --arg context "$FLG_CONTEXT" \
 				--arg namespace "$NAMESPACE" \
 				--arg selector "$SELECTOR" \
 				--arg resource_name "$RESOURCE_NAME" \
@@ -431,13 +427,18 @@ kpf_add_interactive() {
 
 	export FZF_DEFAULT_OPTS="--no-mouse --no-preview --height=35%"
 
-	local namespace=$(kubectl get namespaces --no-headers -o=custom-columns=NAME:.metadata.name | fzf --prompt="namespace > ")
+	local namespaces
+	if ! namespaces=$(kubectl --context $FLG_CONTEXT get namespaces --no-headers -o=custom-columns=NAME:.metadata.name 2>/dev/null); then
+		lerr "Failed on get namespaces, please verify your configurations"; return 1
+	fi
+
+	local namespace=$(fzf --prompt="namespace > " <<<"$namespaces")
 	if [[ -z $namespace ]]; then exit 0; fi
 
-	local resource=$(kubectl -n $namespace get deployments,statefulsets -o=jsonpath='{range .items[*]}{.kind}{"/"}{.metadata.name}{"\n"}{end}' | fzf --prompt="resource > ")
+	local resource=$(kubectl --context $FLG_CONTEXT -n $namespace get deployments,statefulsets -o=jsonpath='{range .items[*]}{.kind}{"/"}{.metadata.name}{"\n"}{end}' | fzf --prompt="resource > ")
 	if [[ -z $resource ]]; then exit 0; fi
 
-	local resource_info=$(kubectl -n $namespace get $resource -o json)
+	local resource_info=$(kubectl --context $FLG_CONTEXT -n $namespace get $resource -o json)
 	if [[ -z $resource_info ]]; then exit 0; fi
 
 	local selector=$(jq -r '.spec.selector.matchLabels | [to_entries[] | "\(.key)=\(.value)"] | join(",")' <<< $resource_info)
@@ -450,8 +451,6 @@ kpf_add_interactive() {
 	if [[ -z $local_port ]]; then exit 0; fi
 
 	kpf_add $namespace $selector $local_port:$remote_port
-
-	exit $?
 }
 
 export -f kpf_add_interactive
@@ -751,6 +750,7 @@ export KUBE_PORT_FORWARDRC=${KUBE_PORT_FORWARDRC:-"$HOME/.config/kube_port_forwa
 
 # Options
 export FLG_ADDRESS=""
+export FLG_CONTEXT="$(kubectl config current-context)"
 export FLG_NOCOLOR=0
 
 cli_usage() {
@@ -761,7 +761,8 @@ cli_usage() {
   echo "Options:"
   echo "  -h, --help               See this"
   echo "  -v, --version            Print version information and quit"
-	echo "  -a, --address            Addresses to listen on comma separated (Only for add command)"
+  echo "  -a, --address            Addresses to listen on comma separated (Only for add/interactive command)"
+  echo "  -c, --context            Kubeconfig context name (Only for add/interactive command)"
   echo
   echo "Commands:"
   echo "  add           Adds a new port forwarding"
@@ -835,6 +836,9 @@ cli_run_cmd() {
   fi
 
   case "$cmd" in
+		'')
+			kpf_add_interactive
+		;;
 		add)
 			kpf_add $@
     ;;
@@ -863,10 +867,6 @@ cli_main() {
   local cmd=""
 	local is_help=0
 
-  if [ $# -eq 0 ]; then
-		kpf_add_interactive
-	fi
-
   while [ ! $# -eq 0 ]; do
     case "$1" in
       --version | -v)
@@ -883,6 +883,11 @@ cli_main() {
 			--address | -a)
 				cli_required "$1" "addresses separated by comma" "$2"
 				FLG_ADDRESS=$2
+				shift
+			;;
+			--context | -c)
+				cli_required "$1" "name of the kubeconfig context" "$2"
+				FLG_CONTEXT=$2
 				shift
 			;;
 			--no-color)
