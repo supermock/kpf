@@ -760,8 +760,8 @@ cli_usage() {
   echo "Options:"
   echo "  -h, --help               See this"
   echo "  -v, --version            Print version information and quit"
-  echo "  -a, --address            Addresses to listen on comma separated (Only for add/interactive command)"
-  echo "  -c, --context            Kubeconfig context name (Only for add/interactive command)"
+  echo "  -a, --address            Addresses to listen on comma separated (Only for add forwards. ex: add/state>restore)"
+  echo "  -c, --context            Kubeconfig context name (Only for add forwards. ex: state>restore)"
   echo "      --no-color           Disable colors on stdout"
   echo
   echo "Commands:"
