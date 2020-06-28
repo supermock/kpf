@@ -41,6 +41,22 @@ Adding a port forward from:
   kpf add kube-system k8s-app=kubernetes-dashboard 8443
   ```
 
+  Use help flag for more documentation
+
+  ```
+  kpf -h add
+  [KPF] Supported types:
+  [KPF]   - svc or service
+  [KPF]   - rs or replicaset
+  [KPF]   - deploy or deployment
+  [KPF] Samples:
+  [KPF]   - kpf add [namespace] [pod-selector]    [port]
+  [KPF]   - kpf add [namespace] [service-name]    [port] svc
+  [KPF]   - kpf add [namespace] [replicaset-name] [port] rs
+  [KPF]   - kpf add [namespace] [deployment-name] [port] deploy
+  [KPF] kpf add [namespace] [selector] [port or local_port:cluster_port] [type?]
+  ```
+
 Listing port forwards
 
 ```sh
